@@ -206,26 +206,60 @@ object L3Parser {
   }
 
   private def sFun(args: Seq[String], body: Tree)
-                  (implicit p: Position): Tree = ???
+                  (implicit p: Position): Tree = {
+    val name = freshName("fun")
+    LetRec(Seq(Fun(name, args, body)), Ident(name))
+  }
+
   private def sLet_*(bdgs: Seq[(String,Tree)], body: Tree)
-                    (implicit p: Position): Tree = ???
-  private def sBegin(exprs: Seq[Tree])(implicit p: Position): Tree = ???
+                    (implicit p: Position): Tree =
+    bdgs.foldRight(body)({
+      case (bind, expr) => Let(Seq(bind), expr)
+    })
+
+  private def sBegin(exprs: Seq[Tree])(implicit p: Position): Tree =
+    exprs.reduceRight[Tree]({
+      case (e1, e2) =>
+        val name = freshName("beginBind")
+        Let(Seq((name, e1)), e2)
+    })
+
   private def sRec(name: String, bdgs: Seq[(String, Tree)], body: Tree)
-                  (implicit p: Position) = ???
-  private def sAnd(es: Seq[Tree])(implicit p: Position): Tree = ???
-  private def sOr(es: Seq[Tree])(implicit p: Position): Tree = ???
-  private def sNot(e: Tree)(implicit p: Position): Tree = ???
+                  (implicit p: Position) = {
+    val args = bdgs.map(x => x._1)
+    val vals = bdgs.map(x => x._2)
+    LetRec(Seq(Fun(name, args, body)), App(Ident(name), vals))
+  }
+
+  private def sAnd(es: Seq[Tree])(implicit p: Position): Tree =
+    es.reduceRight[Tree]({
+      case (expr, tree) => If(expr, tree, Lit(BooleanLit(false)))
+    })
+
+  private def sOr(es: Seq[Tree])(implicit p: Position): Tree =
+    es.reduceRight[Tree]({
+      case (expr, tree) =>
+        val name = freshName("orExpr")
+        Let(Seq((name, expr)), If(Ident(name), Ident(name), tree))
+    })
+
+  private def sNot(e: Tree)(implicit p: Position): Tree =
+    If(e, Lit(BooleanLit(false)), Lit(BooleanLit(true)))
+
   private def sCond(clses: Seq[(Tree, Seq[Tree])])(implicit p: Position): Tree =
-    ???
+    clses.foldRight[Tree](Lit(UnitLit))({
+      case ((c, exprs), tree) => If(c, sBegin(exprs), tree)
+    })
+
   private def sStringLit(s: String)(implicit p: Position): Tree = {
     val b = freshName("string")
     val cs = codePoints(s)
     Let(Seq((b, Prim("block-alloc-"+ BlockTag.String.id,
                      Seq(Lit(IntLit(L3Int(cs.length))))))),
-        sBegin((cs.zipWithIndex map {case (c, i) =>
-                  Prim("block-set!",
-                       Seq(Ident(b), Lit(IntLit(L3Int(i))), Lit(CharLit(c)))) })
-                 :+ Ident(b)))
+        sBegin((cs.zipWithIndex map {
+                  case (c, i) => Prim("block-set!",
+                                      Seq(Ident(b), Lit(IntLit(L3Int(i))), Lit(CharLit(c))))
+                }) :+ Ident(b)))
   }
 
   private def codePoints(chars: Seq[Char]): Seq[L3Char] = chars match {

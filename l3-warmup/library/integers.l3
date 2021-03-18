@@ -147,8 +147,29 @@
                     (#t 0))))))
 
 (def int-print
-     (fun (i) #u))
+     (let ((digit-print
+               (fun (d) (char-print (int->char-digit d)))
+          ))
+          (letrec ((loop
+                    (fun (i)
+	                    (if (!= i 0)
+               	            (begin
+               	             (loop (/t i 10))
+	                         (digit-print (%t i 10))
+	                        )
+	                    )
+	                )
+	              ))
+             (fun (i) (begin
+                         (if (< i 0) (char-print '-'))
+                         (if (= i 0) (digit-print 0))
+                         (loop (int-abs i))
+                      )
+             )
+          )
+     ))
 
 (def int->char
      (fun (i)
           (@int->char i)))
+
