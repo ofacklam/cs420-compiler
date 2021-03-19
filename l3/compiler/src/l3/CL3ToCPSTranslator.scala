@@ -11,6 +11,14 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
       C.Halt(C.AtomL(IntLit(L3Int(0))))
     }
 
+  /********************************************
+   * MUTUALLY RECURSIVE TRANSLATION FUNCTIONS *
+   ********************************************/
+
+  /**
+   * `nonTail` translates the tree `tree`,
+   * and binds its value to an atom which is given to the context `ctx`
+   */
   private def nonTail(tree: S.Tree)(ctx: C.Atom => C.Tree): C.Tree = {
     implicit val pos: Position = tree.pos
     tree match {
@@ -31,6 +39,8 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
         val (name, cnt) = createCont(ctx)
         C.LetC(Seq(cnt), applyFun(fun, name, args))
       }
+      case S.If(S.Lit(BooleanLit(false)), _, e) => nonTail(e)(ctx)
+      case S.If(S.Lit(_), t, _) => nonTail(t)(ctx)
       case S.If(c, t, e) => {
         val (finN, finC) = createCont(ctx)
         val (tN, tC) = createBranch(tail(t)(finN))
@@ -53,6 +63,10 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
     }
   }
 
+  /**
+   * `tail` translates the tree `tree`
+   * and binds its value to an atom which is passed to continuation `cont`
+   */
   private def tail(tree: S.Tree)(cont: C.Name): C.Tree = {
     implicit val pos: Position = tree.pos
     tree match {
@@ -70,6 +84,8 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
         tail(S.If(cond, t, e))(cont)
       }
       case S.App(fun, args) => applyFun(fun, cont, args)
+      case S.If(S.Lit(BooleanLit(false)), _, e) => tail(e)(cont)
+      case S.If(S.Lit(_), t, _) => tail(t)(cont)
       case S.If(c, t, e) => {
         val (tN, tC) = createBranch(tail(t)(cont))
         val (eN, eC) = createBranch(tail(e)(cont))
@@ -91,6 +107,10 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
     }
   }
 
+  /**
+   * `cond` translates the condition `tree` and passes control
+   * to the correct continuation `ct` or `cf`
+   */
   private def cond(tree: S.Tree)(ct: C.Name, cf: C.Name): C.Tree =
     tree match {
       case S.Ident(name) => C.If(L3.Eq, Seq(C.AtomN(name), C.AtomL(BooleanLit(false))), cf, ct)
@@ -127,12 +147,27 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
       }
     }
 
+
+  /********************
+   * HELPER FUNCTIONS *
+   ********************/
+
+  /**
+   * Translates the function and its arguments, then applies it
+   */
   private def applyFun(fun: S.Tree, cont: C.Name, args: Seq[S.Tree]) = {
     nonTail(fun) { f => transformSeq(args) { as => C.AppF(f, cont, as) } }
   }
 
+  /**
+   * Applies the continuation to the atom
+   */
   private def applyCont(cont: C.Name, atom: C.Atom) = C.AppC(cont, Seq(atom))
 
+  /**
+   * Translates (with `noTail`) a sequence of trees and binds them to a sequence of atoms
+   * made available in the context
+   */
   private def transformSeq(trees: Seq[S.Tree])(ctx: Seq[C.Atom] => C.Tree): C.Tree =
     trees match {
       case Seq(head, tail @_*) => nonTail(head) { a1 =>
@@ -143,22 +178,35 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
       case Seq() => ctx(Seq())
     }
 
+  /**
+   * Translates a function definition
+   */
   private def transformFun(f: S.Fun): C.Fun = {
     val contName = Symbol.fresh("funContArg")
     val b = tail(f.body)(contName)
     C.Fun(f.name, contName, f.args, b)
   }
 
+  /**
+   * Retrieves the appropriate branch continuation (`ct` or `cf`)
+   * by statically evaluation the literal `lit`
+   */
   private def getBranch(lit: C.Literal, ct: C.Name, cf: C.Name): C.Name = lit match {
     case BooleanLit(false) => cf
     case _ => ct
   }
 
+  /**
+   * Creates a new branch (i.e. a parameterless contination) wrapping given tree
+   */
   private def createBranch(branch: C.Tree): (C.Name, C.Cnt) = {
     val name = Symbol.fresh("branch")
     (name, C.Cnt(name, Seq(), branch))
   }
 
+  /**
+   * Creates a continuation with 1 parameter, used to fill the context
+   */
   private def createCont(f: C.Atom => C.Tree): (C.Name, C.Cnt) = {
     val contName = Symbol.fresh("contName")
     val contVar = Symbol.fresh("contVar")
