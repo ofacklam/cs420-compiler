@@ -21,23 +21,32 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
         C.LetP(name, prim, as, ctx(C.AtomN(name)))
       }
       case S.Prim(prim: L3TestPrimitive, args) => transformSeq(args) { as =>
-        transformIf(
-          prim, as,
-          cnt => createBranch(C.AppC(cnt, Seq(C.AtomL(BooleanLit(true))))),
-          cnt => createBranch(C.AppC(cnt, Seq(C.AtomL(BooleanLit(false)))))
+        transformIf(prim, as,
+          ifCtx => ifCtx(C.AtomL(BooleanLit(true))),
+          elseCtx => elseCtx(C.AtomL(BooleanLit(false)))
         )(ctx)
       }
       case S.App(fun, args) =>
         val (name, cnt) = createCont(ctx)
         C.LetC(Seq(cnt), transform(fun) { f => transformSeq(args) { as => C.AppF(f, name, as) } })
       case S.If(S.Prim(prim: L3TestPrimitive, args), thenB, elseB) => transformSeq(args) { as =>
-        transformIf(prim, as, transformCreateBranch(thenB), transformCreateBranch(elseB))(ctx)
+        transformIf(prim, as, transform(thenB), transform(elseB))(ctx)
       }
       case S.If(cond, thenB, elseB) => transform(cond) { a =>
         val args = Seq(a, C.AtomL(BooleanLit(false)))
-        transformIf(L3.Eq, args, transformCreateBranch(elseB), transformCreateBranch(thenB))(ctx)
+        transformIf(L3.Eq, args, transform(elseB), transform(thenB))(ctx)
       }
-      case S.LetRec(funs, body) =>
+      case S.LetRec(l3Funs, body) =>
+        val cpsFuns = l3Funs.map(transformFun)
+        C.LetF(cpsFuns, transform(body)(ctx))
+      case S.Let(bndgs, body) =>
+        val names = bndgs.map(e => e._1)
+        val vals = bndgs.map(e => e._2)
+        transformSeq(vals) { as =>
+          names.zip(as).foldRight(transform(body)(ctx)) {
+            case ((n, a), b) => C.LetP(n, L3.Id, Seq(a), b)
+          }
+        }
     }
 
   private def transformSeq(trees: Seq[S.Tree])(ctx: Seq[C.Atom] => C.Tree): C.Tree =
@@ -50,25 +59,28 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
       case Seq() => ctx(Seq())
     }
 
+  private def transformFun(f: S.Fun): C.Fun = {
+    val contName = Symbol.fresh("funContArg")
+    val b = transform(f.body) { a => C.AppC(contName, Seq(a)) }
+    C.Fun(f.name, contName, f.args, b)
+  }
+
   private def transformIf(prim: L3TestPrimitive, args: Seq[C.Atom],
-                          thenB: Symbol => (Symbol, C.Cnt),
-                          elseB: Symbol => (Symbol, C.Cnt))
+                          thenB: (C.Atom => C.Tree) => C.Tree,
+                          elseB: (C.Atom => C.Tree) => C.Tree)
                          (ctx: C.Atom => C.Tree): C.Tree = {
       val (finN, finC) = createCont(ctx)
-      val (thenN, thenC) = thenB(finN)
-      val (elseN, elseC) = elseB(finN)
+      val (thenN, thenC) = createBranch(finN, thenB)
+      val (elseN, elseC) = createBranch(finN, elseB)
       C.LetC(Seq(finC, thenC, elseC),
         C.If(prim, args, thenN, elseN)
       )
     }
 
-  private def createBranch(branch: C.Tree): (Symbol, C.Cnt) = {
+  private def createBranch(finN: Symbol, branch: (C.Atom => C.Tree) => C.Tree): (Symbol, C.Cnt) = {
     val name = Symbol.fresh("branch")
-    (name, C.Cnt(name, Seq(), branch))
+    (name, C.Cnt(name, Seq(), branch { a => C.AppC(finN, Seq(a)) }))
   }
-
-  private def transformCreateBranch(branch: S.Tree)(finN: Symbol): (Symbol, C.Cnt) =
-    createBranch(transform(branch) { a => C.AppC(finN, Seq(a)) })
 
   private def createCont(f: C.Atom => C.Tree): (Symbol, C.Cnt) = {
     val contName = Symbol.fresh("contName")
