@@ -6,3 +6,6 @@
 # VM
 /vm/c/bin/
 /vm/rust/target/
+
+# other
+submit

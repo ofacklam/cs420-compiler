@@ -26,9 +26,10 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
           elseCtx => elseCtx(C.AtomL(BooleanLit(false)))
         )(ctx)
       }
-      case S.App(fun, args) =>
+      case S.App(fun, args) => {
         val (name, cnt) = createCont(ctx)
         C.LetC(Seq(cnt), transform(fun) { f => transformSeq(args) { as => C.AppF(f, name, as) } })
+      }
       case S.If(S.Prim(prim: L3TestPrimitive, args), thenB, elseB) => transformSeq(args) { as =>
         transformIf(prim, as, transform(thenB), transform(elseB))(ctx)
       }
@@ -36,10 +37,11 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
         val args = Seq(a, C.AtomL(BooleanLit(false)))
         transformIf(L3.Eq, args, transform(elseB), transform(thenB))(ctx)
       }
-      case S.LetRec(l3Funs, body) =>
+      case S.LetRec(l3Funs, body) => {
         val cpsFuns = l3Funs.map(transformFun)
         C.LetF(cpsFuns, transform(body)(ctx))
-      case S.Let(bndgs, body) =>
+      }
+      case S.Let(bndgs, body) => {
         val names = bndgs.map(e => e._1)
         val vals = bndgs.map(e => e._2)
         transformSeq(vals) { as =>
@@ -47,6 +49,7 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
             case ((n, a), b) => C.LetP(n, L3.Id, Seq(a), b)
           }
         }
+      }
     }
 
   private def transformSeq(trees: Seq[S.Tree])(ctx: Seq[C.Atom] => C.Tree): C.Tree =
