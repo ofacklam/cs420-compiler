@@ -13,9 +13,10 @@ object Main {
   def main(args: Array[String]): Unit = {
     val backEnd: Tree => TerminalPhaseResult = (
       CL3ToCPSTranslator
-        andThen treePrinter("---------- After translation to CPS")
+        andThen CPSValueRepresenter
+        andThen treePrinter("---------- After value representation")
         andThen treeChecker
-        andThen CPSInterpreterHigh
+        andThen CPSInterpreterLowNoCC
     )
 
     val basePath = Paths.get(".").toAbsolutePath
