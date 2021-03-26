@@ -98,22 +98,22 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
                           thenC: H.Name, elseC: H.Name): L.Tree = {
     val lArgs = args map rewriteAtom
     (cond, lArgs) match {
-      case (L3.BlockP, Seq(b)) => tempLetP(CPS.And, Seq(b, L.AtomL(3))) { t =>
-        L.If(CPST.Eq, Seq(t, L.AtomL(0)), thenC, elseC)
+      case (L3.BlockP, Seq(b)) => tempLetP(CPS.And, Seq(b, cstBits(1, 1))) { t =>
+        L.If(CPST.Eq, Seq(t, cstBits(0, 0)), thenC, elseC)
       }
-      case (L3.IntP, Seq(i)) => tempLetP(CPS.And, Seq(i, L.AtomL(1))) { t =>
-        L.If(CPST.Eq, Seq(t, L.AtomL(1)), thenC, elseC)
+      case (L3.IntP, Seq(i)) => tempLetP(CPS.And, Seq(i, cstBits(1))) { t =>
+        L.If(CPST.Eq, Seq(t, cstBits(1)), thenC, elseC)
       }
       case (L3.IntLt, Seq(a, b)) => L.If(CPST.Lt, Seq(a, b), thenC, elseC)
       case (L3.IntLe, Seq(a, b)) => L.If(CPST.Le, Seq(a, b), thenC, elseC)
-      case (L3.CharP, Seq(c)) => tempLetP(CPS.And, Seq(c, L.AtomL(7))) { t =>
-        L.If(CPST.Eq, Seq(t, L.AtomL(6)), thenC, elseC)
+      case (L3.CharP, Seq(c)) => tempLetP(CPS.And, Seq(c, cstBits(1, 1, 1))) { t =>
+        L.If(CPST.Eq, Seq(t, cstBits(1, 1, 0)), thenC, elseC)
       }
-      case (L3.BoolP, Seq(b)) => tempLetP(CPS.And, Seq(b, L.AtomL(15))) { t =>
-        L.If(CPST.Eq, Seq(t, L.AtomL(10)), thenC, elseC)
+      case (L3.BoolP, Seq(b)) => tempLetP(CPS.And, Seq(b, cstBits(1, 1, 1, 1))) { t =>
+        L.If(CPST.Eq, Seq(t, cstBits(1, 0, 1, 0)), thenC, elseC)
       }
-      case (L3.UnitP, Seq(u)) => tempLetP(CPS.And, Seq(u, L.AtomL(15))) { t =>
-        L.If(CPST.Eq, Seq(t, L.AtomL(2)), thenC, elseC)
+      case (L3.UnitP, Seq(u)) => tempLetP(CPS.And, Seq(u, cstBits(1, 1, 1, 1))) { t =>
+        L.If(CPST.Eq, Seq(t, cstBits(0, 0, 1, 0)), thenC, elseC)
       }
       case (L3.Eq, Seq(a, b)) => L.If(CPST.Eq, Seq(a, b), thenC, elseC)
     }
@@ -125,11 +125,11 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def rewriteAtom(a: H.Atom): L.Atom = a match {
     case H.AtomN(n) => L.AtomN(n)
-    case H.AtomL(IntLit(i)) => L.AtomL((i.toInt << 1) | 1)
-    case H.AtomL(CharLit(c)) => L.AtomL((c << 3) | 6)
-    case H.AtomL(BooleanLit(true)) => L.AtomL(26)
-    case H.AtomL(BooleanLit(false)) => L.AtomL(10)
-    case H.AtomL(UnitLit) => L.AtomL(2)
+    case H.AtomL(IntLit(i)) => cst((i.toInt << 1) | cstBits(1))
+    case H.AtomL(CharLit(c)) => cst((c << 3) | cstBits(1, 1, 0))
+    case H.AtomL(BooleanLit(true)) => cstBits(1, 1, 0, 1, 0)
+    case H.AtomL(BooleanLit(false)) => cstBits(0, 1, 0, 1, 0)
+    case H.AtomL(UnitLit) => cstBits(0, 0, 1, 0)
   }
 
   private def untagInt(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
@@ -144,4 +144,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     val tmp = Symbol.fresh("tmp")
     L.LetP(tmp, prim, args, body(L.AtomN(tmp)))
   }
+
+  private def cst(v: Int): L.AtomL = L.AtomL(v)
+  private def cstBits(bits: Int*): L.AtomL = cst(bitsToIntMSBF(bits :_*))
 }
