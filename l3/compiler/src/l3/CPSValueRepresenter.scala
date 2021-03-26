@@ -7,6 +7,9 @@ import l3.{CPSValuePrimitive => CPS}
 import l3.{CPSTestPrimitive => CPST}
 
 object CPSValueRepresenter extends (H.Tree => L.Tree) {
+  /**
+   * Translates a high-level CPS tree to a low-level tree
+   */
   def apply(tree: H.Tree): L.Tree = tree match {
     case H.LetP(name, prim, args, body) => translateLetP(name, prim, args, body)
     case H.LetC(cnts, body) => L.LetC(cnts map translateCnt, apply(body))
@@ -17,6 +20,9 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     case H.Halt(arg) => untagInt(rewriteAtom(arg)) { u => L.Halt(u) }
   }
 
+  /**
+   * Translates all LetP clauses, treating each possible ValuePrimitive case separately
+   */
   private def translateLetP(name: H.Name,
                             prim: H.ValuePrimitive,
                             args: Seq[H.Atom],
@@ -93,6 +99,9 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     }
   }
 
+  /**
+   * Translates all If clauses, treating each possible TestPrimitive case separately
+   */
   private def translateIf(cond: H.TestPrimitive,
                           args: Seq[H.Atom],
                           thenC: H.Name, elseC: H.Name): L.Tree = {
@@ -119,10 +128,19 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     }
   }
 
+  /**
+   * Translate function definitions by recursively translating the body
+   */
   private def translateFun(f: H.Fun): L.Fun = L.Fun(f.name, f.retC, f.args, apply(f.body))
 
+  /**
+   * Translate continuation definitions by recursively translating the body
+   */
   private def translateCnt(c: H.Cnt): L.Cnt = L.Cnt(c.name, c.args, apply(c.body))
 
+  /**
+   * Translate each possible atom
+   */
   private def rewriteAtom(a: H.Atom): L.Atom = a match {
     case H.AtomN(n) => L.AtomN(n)
     case H.AtomL(IntLit(i)) => cst((i.toInt << 1) | bitsToIntMSBF(1))
@@ -132,6 +150,9 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     case H.AtomL(UnitLit) => cstBits(0, 0, 1, 0)
   }
 
+  /*****************************************
+   * HELPER FUNCTIONS for code refactoring *
+   *****************************************/
   private def tempLetP(prim: L.ValuePrimitive, args: Seq[L.Atom])(body: L.Atom => L.Tree): L.Tree = {
     val tmp = Symbol.fresh("tmp")
     L.LetP(tmp, prim, args, body(L.AtomN(tmp)))
