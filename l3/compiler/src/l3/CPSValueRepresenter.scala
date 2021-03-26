@@ -59,7 +59,8 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           }
         }
       }
-      case (L3.IntMod, Seq(a, b)) => untagInt(a) { t1 => untagInt(b) { t2 => // TODO
+      case (L3.IntMod, Seq(a, b)) => untagInt(a) { t1 =>
+        untagInt(b) { t2 => // TODO
           tempLetP(CPS.Mod, Seq(t1, t2)) { res =>
             tagInt(name, res, lBody)
           }
@@ -94,8 +95,29 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def translateIf(cond: H.TestPrimitive,
                           args: Seq[H.Atom],
-                          thenC: H.Name, elseC: H.Name): L.Tree =
-    ???
+                          thenC: H.Name, elseC: H.Name): L.Tree = {
+    val lArgs = args map rewriteAtom
+    (cond, lArgs) match {
+      case (L3.BlockP, Seq(b)) => tempLetP(CPS.And, Seq(b, L.AtomL(3))) { t =>
+        L.If(CPST.Eq, Seq(t, L.AtomL(0)), thenC, elseC)
+      }
+      case (L3.IntP, Seq(i)) => tempLetP(CPS.And, Seq(i, L.AtomL(1))) { t =>
+        L.If(CPST.Eq, Seq(t, L.AtomL(1)), thenC, elseC)
+      }
+      case (L3.IntLt, Seq(a, b)) => L.If(CPST.Lt, Seq(a, b), thenC, elseC)
+      case (L3.IntLe, Seq(a, b)) => L.If(CPST.Le, Seq(a, b), thenC, elseC)
+      case (L3.CharP, Seq(c)) => tempLetP(CPS.And, Seq(c, L.AtomL(7))) { t =>
+        L.If(CPST.Eq, Seq(t, L.AtomL(6)), thenC, elseC)
+      }
+      case (L3.BoolP, Seq(b)) => tempLetP(CPS.And, Seq(b, L.AtomL(15))) { t =>
+        L.If(CPST.Eq, Seq(t, L.AtomL(10)), thenC, elseC)
+      }
+      case (L3.UnitP, Seq(u)) => tempLetP(CPS.And, Seq(u, L.AtomL(15))) { t =>
+        L.If(CPST.Eq, Seq(t, L.AtomL(2)), thenC, elseC)
+      }
+      case (L3.Eq, Seq(a, b)) => L.If(CPST.Eq, Seq(a, b), thenC, elseC)
+    }
+  }
 
   private def translateFun(f: H.Fun): L.Fun = L.Fun(f.name, f.retC, f.args, apply(f.body))
 
