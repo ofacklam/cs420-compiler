@@ -65,10 +65,10 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           }
         }
       }
-      case (L3.IntMod, Seq(a, b)) => untagInt(a) { t1 =>
-        untagInt(b) { t2 => // TODO
+      case (L3.IntMod, Seq(a, b)) => decrement(a) { t1 =>
+        decrement(b) { t2 =>
           tempLetP(CPS.Mod, Seq(t1, t2)) { res =>
-            tagInt(name, res, lBody)
+            incrementBind(name, res, lBody)
           }
         }
       }
@@ -182,5 +182,6 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     }
 
   private def cst(v: Int): L.AtomL = L.AtomL(v)
-  private def cstBits(bits: Int*): L.AtomL = cst(bitsToIntMSBF(bits :_*))
+
+  private def cstBits(bits: Int*): L.AtomL = cst(bitsToIntMSBF(bits: _*))
 }
