@@ -39,21 +39,21 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       case (L3.BlockSet, Seq(b, n, v)) => untagInt(n) { idx =>
         L.LetP(name, CPS.BlockSet, Seq(b, idx, v), lBody)
       }
-      case (L3.IntAdd, Seq(a, b)) => tempLetP(CPS.Sub, Seq(a, L.AtomL(1))) { t =>
+      case (L3.IntAdd, Seq(a, b)) => decrement(a) { t =>
         L.LetP(name, CPS.Add, Seq(t, b), lBody)
       }
-      case (L3.IntSub, Seq(a, b)) => tempLetP(CPS.Add, Seq(a, L.AtomL(1))) { t =>
+      case (L3.IntSub, Seq(a, b)) => increment(a) { t =>
         L.LetP(name, CPS.Sub, Seq(t, b), lBody)
       }
-      case (L3.IntMul, Seq(a, b)) => tempLetP(CPS.Sub, Seq(a, L.AtomL(1))) { t1 =>
-        tempLetP(CPS.ShiftRight, Seq(b, L.AtomL(1))) { t2 =>
+      case (L3.IntMul, Seq(a, b)) => decrement(a) { t1 =>
+        shiftRight1(b) { t2 =>
           tempLetP(CPS.Mul, Seq(t1, t2)) { res =>
-            L.LetP(name, CPS.Add, Seq(res, L.AtomL(1)), lBody)
+            incrementBind(name, res, lBody)
           }
         }
       }
-      case (L3.IntDiv, Seq(a, b)) => tempLetP(CPS.Sub, Seq(a, L.AtomL(1))) { t1 =>
-        tempLetP(CPS.Sub, Seq(b, L.AtomL(1))) { t2 =>
+      case (L3.IntDiv, Seq(a, b)) => decrement(a) { t1 =>
+        decrement(b) { t2 =>
           tempLetP(CPS.Div, Seq(t1, t2)) { res =>
             tagInt(name, res, lBody)
           }
@@ -67,26 +67,26 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
         }
       }
       case (L3.IntShiftLeft, Seq(a, b)) => untagInt(b) { s =>
-        tempLetP(CPS.Sub, Seq(a, L.AtomL(1))) { t =>
+        decrement(a) { t =>
           tempLetP(CPS.ShiftLeft, Seq(t, s)) { res =>
-            L.LetP(name, CPS.Add, Seq(res, L.AtomL(1)), lBody)
+            incrementBind(name, res, lBody)
           }
         }
       }
       case (L3.IntShiftRight, Seq(a, b)) => untagInt(b) { s =>
         tempLetP(CPS.ShiftRight, Seq(a, s)) { res =>
-          L.LetP(name, CPS.Or, Seq(res, L.AtomL(1)), lBody)
+          L.LetP(name, CPS.Or, Seq(res, cst(1)), lBody)
         }
       }
       case (L3.IntBitwiseAnd, Seq(a, b)) => L.LetP(name, CPS.And, Seq(a, b), lBody)
       case (L3.IntBitwiseOr, Seq(a, b)) => L.LetP(name, CPS.Or, Seq(a, b), lBody)
       case (L3.IntBitwiseXOr, Seq(a, b)) => tempLetP(CPS.XOr, Seq(a, b)) { res =>
-        L.LetP(name, CPS.Or, Seq(res, L.AtomL(1)), lBody)
+        L.LetP(name, CPS.Or, Seq(res, cst(1)), lBody)
       }
       case (L3.ByteRead, Seq()) => tempLetP(CPS.ByteRead, Seq()) { res => tagInt(name, res, lBody) }
       case (L3.ByteWrite, Seq(v)) => untagInt(v) { u => L.LetP(name, CPS.ByteWrite, Seq(u), lBody) }
       case (L3.IntToChar, Seq(i)) => tempLetP(CPS.ShiftLeft, Seq(i, L.AtomL(2))) { shifted =>
-        L.LetP(name, CPS.Add, Seq(shifted, L.AtomL(2)), lBody)
+        L.LetP(name, CPS.Or, Seq(shifted, cstBits(1, 0)), lBody)
       }
       case (L3.CharToInt, Seq(c)) => L.LetP(name, CPS.ShiftRight, Seq(c, L.AtomL(2)), lBody)
       case (L3.Id, Seq(n)) => L.LetP(name, CPS.Id, Seq(n), lBody)
@@ -125,25 +125,40 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def rewriteAtom(a: H.Atom): L.Atom = a match {
     case H.AtomN(n) => L.AtomN(n)
-    case H.AtomL(IntLit(i)) => cst((i.toInt << 1) | cstBits(1))
-    case H.AtomL(CharLit(c)) => cst((c << 3) | cstBits(1, 1, 0))
+    case H.AtomL(IntLit(i)) => cst((i.toInt << 1) | bitsToIntMSBF(1))
+    case H.AtomL(CharLit(c)) => cst((c << 3) | bitsToIntMSBF(1, 1, 0))
     case H.AtomL(BooleanLit(true)) => cstBits(1, 1, 0, 1, 0)
     case H.AtomL(BooleanLit(false)) => cstBits(0, 1, 0, 1, 0)
     case H.AtomL(UnitLit) => cstBits(0, 0, 1, 0)
   }
 
-  private def untagInt(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
-    tempLetP(CPS.ShiftRight, Seq(a, L.AtomL(1)))(body)
-
-  private def tagInt(name: L.Name, u: L.Atom, body: L.Tree): L.Tree =
-    tempLetP(CPS.ShiftLeft, Seq(u, L.AtomL(1))) { t =>
-      L.LetP(name, CPS.Add, Seq(t, L.AtomL(1)), body)
-    }
-
   private def tempLetP(prim: L.ValuePrimitive, args: Seq[L.Atom])(body: L.Atom => L.Tree): L.Tree = {
     val tmp = Symbol.fresh("tmp")
     L.LetP(tmp, prim, args, body(L.AtomN(tmp)))
   }
+
+  private def increment(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
+    tempLetP(CPS.Add, Seq(a, cst(1)))(body)
+
+  private def incrementBind(name: L.Name, u: L.Atom, body: L.Tree): L.Tree =
+    L.LetP(name, CPS.Add, Seq(u, cst(1)), body)
+
+  private def decrement(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
+    tempLetP(CPS.Sub, Seq(a, cst(1)))(body)
+
+  private def shiftLeft1(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
+    tempLetP(CPS.ShiftLeft, Seq(a, cst(1)))(body)
+
+  private def shiftRight1(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
+    tempLetP(CPS.ShiftRight, Seq(a, cst(1)))(body)
+
+  private def untagInt(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
+    shiftRight1(a)(body)
+
+  private def tagInt(name: L.Name, u: L.Atom, body: L.Tree): L.Tree =
+    shiftLeft1(u) { t =>
+      incrementBind(name, t, body)
+    }
 
   private def cst(v: Int): L.AtomL = L.AtomL(v)
   private def cstBits(bits: Int*): L.AtomL = cst(bitsToIntMSBF(bits :_*))
