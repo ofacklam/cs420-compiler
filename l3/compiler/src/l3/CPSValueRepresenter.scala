@@ -97,11 +97,18 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
                           thenC: H.Name, elseC: H.Name): L.Tree =
     ???
 
-  private def translateFun(f: H.Fun): L.Fun = ???
+  private def translateFun(f: H.Fun): L.Fun = L.Fun(f.name, f.retC, f.args, apply(f.body))
 
-  private def translateCnt(f: H.Cnt): L.Cnt = ???
+  private def translateCnt(c: H.Cnt): L.Cnt = L.Cnt(c.name, c.args, apply(c.body))
 
-  private def rewriteAtom(a: H.Atom): L.Atom = ???
+  private def rewriteAtom(a: H.Atom): L.Atom = a match {
+    case H.AtomN(n) => L.AtomN(n)
+    case H.AtomL(IntLit(i)) => L.AtomL((i.toInt << 1) | 1)
+    case H.AtomL(CharLit(c)) => L.AtomL((c << 3) | 6)
+    case H.AtomL(BooleanLit(true)) => L.AtomL(26)
+    case H.AtomL(BooleanLit(false)) => L.AtomL(10)
+    case H.AtomL(UnitLit) => L.AtomL(2)
+  }
 
   private def untagInt(a: L.Atom)(body: L.Atom => L.Tree): L.Tree =
     tempLetP(CPS.ShiftRight, Seq(a, L.AtomL(1)))(body)
