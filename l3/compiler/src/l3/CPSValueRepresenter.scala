@@ -13,9 +13,9 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   def apply(tree: H.Tree): L.Tree = tree match {
     case H.LetP(name, prim, args, body) => translateLetP(name, prim, args, body)
     case H.LetC(cnts, body) => L.LetC(cnts map translateCnt, apply(body))
-    case H.LetF(funs, body) => L.LetF(funs map translateFun, apply(body))
+    case H.LetF(funs, body) => translateLetF(funs, body)
     case H.AppC(cnt, args) => L.AppC(cnt, args map rewriteAtom)
-    case H.AppF(fun, retC, args) => L.AppF(rewriteAtom(fun), retC, args map rewriteAtom)
+    case H.AppF(fun, retC, args) => translateAppF(fun, retC, args)
     case H.If(cond, args, thenC, elseC) => translateIf(cond, args, thenC, elseC)
     case H.Halt(arg) => untagInt(rewriteAtom(arg)) { u => L.Halt(u) }
   }
@@ -129,9 +129,61 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   }
 
   /**
-   * Translate function definitions by recursively translating the body
+   * Translate function declarations by doing closure conversion (define worker + create environment)
    */
-  private def translateFun(f: H.Fun): L.Fun = L.Fun(f.name, f.retC, f.args, apply(f.body))
+  private def translateLetF(funs: Seq[H.Fun], body: H.Tree): L.Tree = {
+    def createWorker(f: H.Fun): (L.Name, L.Fun, Seq[L.Name]) = {
+      val workerName = Symbol.fresh("worker")
+      val envName = Symbol.fresh("env")
+      val lBody = apply(f.body)
+
+      val fvs = freeVariables(L.Fun(f.name, f.retC, f.args, lBody)).toSeq
+      val bvs = for (_ <- fvs) yield Symbol.fresh("boundVar")
+
+      val substitution = subst(f.name +: fvs, envName +: bvs)
+      val sBody = substitute(lBody, substitution)
+
+      val workerBody = bvs.zipWithIndex.foldRight(sBody) {
+        case ((bv, i), b) => L.LetP(bv, CPS.BlockGet, Seq(L.AtomN(envName), cst(i + 1)), b)
+      }
+      (f.name, L.Fun(workerName, f.retC, envName +: f.args, workerBody), fvs)
+    }
+
+    def createClosure(name: L.Name, fvs: Seq[L.Name])(body: L.Tree): L.Tree = {
+      L.LetP(name, CPS.BlockAlloc(BlockTag.Function.id), Seq(cst(fvs.size + 1)), body)
+    }
+
+    def initClosure(name: L.Name, worker: L.Fun, fvs: Seq[L.Name])(body: L.Tree): L.Tree = {
+      val closure = L.AtomN(name)
+
+      (worker.name +: fvs).zipWithIndex.foldRight(body) {
+        case ((n, i), b) => L.LetP(Symbol.fresh("blockSet"), CPS.BlockSet, Seq(closure, cst(i), L.AtomN(n)), b)
+      }
+    }
+
+    // Create workers
+    val workers = funs map createWorker
+    val lBody = apply(body)
+
+    // Create closures
+    val blocksInit = workers.foldRight(lBody) {
+      case ((n, w, fvs), b) => initClosure(n, w, fvs)(b)
+    }
+    val blocksCreation = workers.foldRight(blocksInit) {
+      case ((n, _, fvs), b) => createClosure(n, fvs)(b)
+    }
+
+    L.LetF(workers.map(_._2), blocksCreation)
+  }
+
+  /**
+   * Translate function applications by extracting worker from closure
+   */
+  private def translateAppF(f: H.Atom, c: L.Name, args: Seq[H.Atom]): L.Tree = {
+    val closure = rewriteAtom(f)
+    val lArgs = closure +: args.map(rewriteAtom)
+    tempLetP(CPS.BlockGet, Seq(closure, cst(0))) { worker => L.AppF(worker, c, lArgs) }
+  }
 
   /**
    * Translate continuation definitions by recursively translating the body
@@ -184,4 +236,63 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   private def cst(v: Int): L.AtomL = L.AtomL(v)
 
   private def cstBits(bits: Int*): L.AtomL = cst(bitsToIntMSBF(bits: _*))
+
+  /**
+   * Free variable calculation
+   */
+  private def freeVariables(tree: L.Tree): Set[L.Name] = tree match {
+    case L.LetP(n, _, args, b) => (freeVariables(b) - n) | flattenSets(args map freeVariables)
+    case L.LetC(cnts, b) => flattenSets(cnts map freeVariables) | freeVariables(b)
+    case L.LetF(funs, b) => (flattenSets(funs map freeVariables) | freeVariables(b)) &~ funs.map(_.name).toSet
+    case L.AppC(_, args) => flattenSets(args map freeVariables)
+    case L.AppF(f, _, args) => flattenSets(args map freeVariables) | freeVariables(f)
+    case L.If(_, args, _, _) => flattenSets(args map freeVariables)
+    case L.Halt(a) => freeVariables(a)
+  }
+
+  private def freeVariables(c: L.Cnt): Set[L.Name] =
+    freeVariables(c.body) &~ c.args.toSet
+
+  private def freeVariables(f: L.Fun): Set[L.Name] =
+    freeVariables(f.body) &~ f.args.toSet
+
+  private def freeVariables(atom: L.Atom): Set[L.Name] = atom match {
+    case L.AtomL(_) => Set()
+    case L.AtomN(n) => Set(n)
+  }
+
+  private def flattenSets[A](in: Seq[Set[A]]): Set[A] =
+    in.fold(Set.empty) {
+      case (a, b) => a | b
+    }
+
+  /**
+   * Variable substitution
+   */
+  private def substitute(tree: L.Tree, s: Subst[L.Name]): L.Tree = {
+    def substT(tree: L.Tree): L.Tree = tree match {
+      case L.LetP(name, prim, args, body) => L.LetP(name, prim, args map substA, substT(body))
+      case L.LetC(cnts, body) => L.LetC(cnts map substC, substT(body))
+      case L.LetF(funs, body) => L.LetF(funs map substF, substT(body))
+      case L.AppC(cnt, args) => L.AppC(cnt, args map substA)
+      case L.AppF(fun, retC, args) => L.AppF(substA(fun), retC, args map substA)
+      case L.If(cond, args, thenC, elseC) => L.If(cond, args map substA, thenC, elseC)
+      case L.Halt(arg) => L.Halt(substA(arg))
+    }
+
+    def substC(cnt: L.Cnt): L.Cnt = // code for continuation definitions
+      L.Cnt(cnt.name, cnt.args, substT(cnt.body))
+
+    def substF(fun: L.Fun): L.Fun = // code for function definitions
+      L.Fun(fun.name, fun.retC, fun.args, substT(fun.body))
+
+    def substA(atom: L.Atom): L.Atom = atom match { // code for atoms
+      case L.AtomL(l) => L.AtomL(l)
+      case L.AtomN(n) => L.AtomN(s.apply(n))
+    }
+
+    substT(tree)
+  }
+
+
 }
