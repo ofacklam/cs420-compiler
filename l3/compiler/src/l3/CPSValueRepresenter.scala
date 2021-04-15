@@ -105,7 +105,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   private def translateLetF(funs: Seq[H.Fun], body: H.Tree): L.Tree = {
     // Compute free variables
     val funNames = funs.map(_.name)
-    val freeVars = funs map { f => freeVariables(L.Fun(f.name, f.retC, f.args, apply(f.body))).toSeq }
+    val freeVars = funs map { f => freeVariables(f).toSeq }
 
     // Create workers
     val workers = (funs zip freeVars) map {
@@ -218,25 +218,25 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   /**
    * Free variable calculation
    */
-  private def freeVariables(tree: L.Tree): Set[L.Name] = tree match {
-    case L.LetP(n, _, args, b) => (freeVariables(b) - n) | flattenSets(args map freeVariables)
-    case L.LetC(cnts, b) => flattenSets(cnts map freeVariables) | freeVariables(b)
-    case L.LetF(funs, b) => (flattenSets(funs map freeVariables) | freeVariables(b)) &~ funs.map(_.name).toSet
-    case L.AppC(_, args) => flattenSets(args map freeVariables)
-    case L.AppF(f, _, args) => flattenSets(args map freeVariables) | freeVariables(f)
-    case L.If(_, args, _, _) => flattenSets(args map freeVariables)
-    case L.Halt(a) => freeVariables(a)
+  private def freeVariables(tree: H.Tree): Set[H.Name] = tree match {
+    case H.LetP(n, _, args, b) => (freeVariables(b) - n) | flattenSets(args map freeVariables)
+    case H.LetC(cnts, b) => flattenSets(cnts map freeVariables) | freeVariables(b)
+    case H.LetF(funs, b) => (flattenSets(funs map freeVariables) | freeVariables(b)) &~ funs.map(_.name).toSet
+    case H.AppC(_, args) => flattenSets(args map freeVariables)
+    case H.AppF(f, _, args) => flattenSets(args map freeVariables) | freeVariables(f)
+    case H.If(_, args, _, _) => flattenSets(args map freeVariables)
+    case H.Halt(a) => freeVariables(a)
   }
 
-  private def freeVariables(c: L.Cnt): Set[L.Name] =
+  private def freeVariables(c: H.Cnt): Set[H.Name] =
     freeVariables(c.body) &~ c.args.toSet
 
-  private def freeVariables(f: L.Fun): Set[L.Name] =
-    freeVariables(f.body) &~ f.args.toSet
+  private def freeVariables(f: H.Fun): Set[H.Name] =
+    freeVariables(f.body) &~ (f.name +: f.args).toSet
 
-  private def freeVariables(atom: L.Atom): Set[L.Name] = atom match {
-    case L.AtomL(_) => Set()
-    case L.AtomN(n) => Set(n)
+  private def freeVariables(atom: H.Atom): Set[H.Name] = atom match {
+    case H.AtomL(_) => Set()
+    case H.AtomN(n) => Set(n)
   }
 
   private def flattenSets[A](in: Seq[Set[A]]): Set[A] =
