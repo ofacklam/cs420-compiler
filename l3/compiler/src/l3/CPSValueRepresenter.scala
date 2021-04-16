@@ -8,6 +8,9 @@ import l3.{CPSTestPrimitive => CPST}
 
 object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
+  /**
+   * Environment type, mapping function name to (worker name, free variables) tuple
+   */
   type Env = Map[L.Name, (L.Name, Seq[L.Name])]
 
   /**
@@ -253,7 +256,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
   private def freeVariables(tree: H.Tree, env: Env): Set[H.Name] = tree match {
     case H.LetP(n, _, args, b) => (freeVariables(b, env) - n) | flattenSets(args map freeVariables)
     case H.LetC(cnts, b) => flattenSets(cnts.map(freeVariables(_, env))) | freeVariables(b, env)
-    case H.LetF(funs, b) =>
+    case H.LetF(funs, b) => // no need to edit environment, it wouldn't add any new free variables to LetF expression
       val funFreeVars = flattenSets(funs.map(freeVariables(_, env)))
       val bodyFreeVars = freeVariables(b, env)
       (funFreeVars | bodyFreeVars) &~ funs.map(_.name).toSet
