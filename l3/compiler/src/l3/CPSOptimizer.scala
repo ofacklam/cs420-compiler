@@ -55,7 +55,82 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   private def shrink(tree: Tree): Tree =
     shrink(tree, State(census(tree)))
 
-  private def shrink(tree: Tree, s: State): Tree = ???
+  private def shrink(tree: Tree, s: State): Tree = tree match {
+    case LetP(n, p, _, b) if s.dead(n) && !impure(p) => shrink(b, s)
+    case LetP(n, p, a, b) if s.eInvEnv.contains(p, a map s.aSubst) && !impure(p) && !unstable(p) =>
+      shrink(b, s.withASubst(n, s.eInvEnv(p, a map s.aSubst)))
+    case LetP(n, p, a, b) if doCFLitV(p, a) =>
+      val foldedLit = vEvaluator.apply(p, a map (_.asLiteral.get))
+      shrink(b, s.withASubst(n, foldedLit))
+    case LetP(n, p, a, b) if doCFSameV(p, a, s) =>
+      val foldedAtom = sameArgReduce.apply(p, s.aSubst(a.head))
+      shrink(b, s.withASubst(n, foldedAtom))
+    case LetP(n, p, Seq(AtomL(l), a), b) if leftNeutral.contains(l, p) => shrink(b, s.withASubst(n, a))
+    case LetP(n, p, Seq(a, AtomL(l)), b) if rightNeutral.contains(p, l) => shrink(b, s.withASubst(n, a))
+    case LetP(n, p, Seq(AtomL(l), _), b) if leftAbsorbing.contains(l, p) => shrink(b, s.withASubst(n, l))
+    case LetP(n, p, Seq(_, AtomL(l)), b) if rightAbsorbing.contains(p, l) => shrink(b, s.withASubst(n, l))
+    case LetP(n, p, a, b) =>
+      val subArgs = a map s.aSubst
+      LetP(n, p, subArgs, shrink(b, s.withExp(n, p, subArgs)))
+
+    case LetC(cnts, body) =>
+      val nonDead = cnts.filterNot(c => s.dead(c.name))
+      val toInline = nonDead.filter(c => s.appliedOnce(c.name))
+      val regular = nonDead.filterNot(c => s.appliedOnce(c.name))
+      val newState = s.withCnts(toInline)
+      val shrunkCnts = regular.map(c => Cnt(c.name, c.args, shrink(c.body, newState)))
+      LetC(shrunkCnts, shrink(body, newState))
+
+    case LetF(funs, body) =>
+      val nonDead = funs.filterNot(f => s.dead(f.name))
+      val toInline = nonDead.filter(f => s.appliedOnce(f.name))
+      val regular = nonDead.filterNot(f => s.appliedOnce(f.name))
+      val newState = s.withFuns(toInline)
+      val shrunkFuns = regular.map(f => Fun(f.name, f.retC, f.args, shrink(f.body, newState)))
+      LetF(shrunkFuns, shrink(body, newState))
+
+    case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
+      val c = s.cEnv(s.cSubst(cnt))
+      shrink(c.body, s.withASubst(c.args, args))
+    case AppC(cnt, args) => AppC(s.cSubst(cnt), args map s.aSubst)
+
+    case AppF(fun, retC, args) if s.aSubst(fun).asName.nonEmpty && s.fEnv.contains(s.aSubst(fun).asName.get) =>
+      val f = s.fEnv(s.aSubst(fun).asName.get)
+      shrink(f.body, s.withASubst(f.args, args).withCSubst(f.retC, retC))
+    case AppF(fun, retC, args) => AppF(s.aSubst(fun), s.cSubst(retC), args map s.aSubst)
+
+    case If(c, a, t, e) if doCFLitT(c, a) =>
+      val foldedLit = cEvaluator.apply(c, a map (_.asLiteral.get))
+      if(foldedLit) AppC(s.cSubst(t), Seq())
+      else AppC(s.cSubst(e), Seq())
+    case If(c, a, t, e) if doCFSameT(c, a, s) =>
+      val testResult = sameArgReduceC.apply(c)
+      if(testResult) AppC(s.cSubst(t), Seq())
+      else AppC(s.cSubst(e), Seq())
+    case If(c, a, t, e) => If(c, a map s.aSubst, s.cSubst(t), s.cSubst(e))
+
+    case Halt(arg) => Halt(s.aSubst(arg))
+  }
+
+  // Constant folding (CF)
+  private def doCFLitV(prim: ValuePrimitive, args: Seq[Atom]): Boolean =
+    args.forall(_.asLiteral.nonEmpty) && vEvaluator.isDefinedAt(prim, args map (_.asLiteral.get))
+  private def doCFLitT(prim: TestPrimitive, args: Seq[Atom]): Boolean =
+    args.forall(_.asLiteral.nonEmpty) && cEvaluator.isDefinedAt(prim, args map (_.asLiteral.get))
+  private def doCFSameV(prim: ValuePrimitive, args: Seq[Atom], s: State): Boolean = {
+    val subArgs = args map s.aSubst
+    subArgs.headOption match {
+      case None => false
+      case Some(arg) => subArgs.forall(_ == arg) && sameArgReduce.isDefinedAt(prim, arg)
+    }
+  }
+  private def doCFSameT(prim: TestPrimitive, args: Seq[Atom], s: State): Boolean = {
+    val subArgs = args map s.aSubst
+    subArgs.headOption match {
+      case None => false
+      case Some(arg) => subArgs.forall(_ == arg) && sameArgReduceC.isDefinedAt(prim)
+    }
+  }
 
   // (Non-shrinking) inlining
 
@@ -185,7 +260,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   protected val rightAbsorbing: Set[(ValuePrimitive, Literal)]
 
   protected val sameArgReduce: PartialFunction[(ValuePrimitive, Atom), Atom]
-  protected val sameArgReduceC: TestPrimitive => Boolean
+  protected val sameArgReduceC: PartialFunction[TestPrimitive, Boolean]
 
   protected val vEvaluator: PartialFunction[(ValuePrimitive, Seq[Literal]),
                                             Literal]
