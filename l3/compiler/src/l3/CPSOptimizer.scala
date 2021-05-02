@@ -186,7 +186,29 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
       def sameLen[T,U](formalArgs: Seq[T], actualArgs: Seq[U]): Boolean =
         formalArgs.length == actualArgs.length
 
-      def inlineT(tree: Tree)(implicit s: State): Tree = ???
+      def inlineT(tree: Tree)(implicit s: State): Tree = tree match {
+        case LetP(name, prim, args, body) => LetP(name, prim, args map s.aSubst, inlineT(body))
+        case LetC(cnts, body) =>
+          val toInline = cnts.filter(c => size(c.body) <= cntLimit)
+          val newState = s.withCnts(toInline map copyC)
+          val tfCnts = cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
+          LetC(tfCnts, inlineT(body)(newState))
+        case LetF(funs, body) =>
+          val toInline = funs.filter(f => size(f.body) <= funLimit)
+          val newState = s.withFuns(toInline map copyF)
+          val tfFuns = funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(newState)))
+          LetF(tfFuns, inlineT(body)(newState))
+        case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
+          val c = s.cEnv(s.cSubst(cnt))
+          inlineT(c.body)(s.withASubst(c.args, args))
+        case AppC(cnt, args) => AppC(s.cSubst(cnt), args map s.aSubst)
+        case AppF(fun, retC, args) if s.aSubst(fun).asName.nonEmpty && s.fEnv.contains(s.aSubst(fun).asName.get) =>
+          val f = s.fEnv(s.aSubst(fun).asName.get)
+          inlineT(f.body)(s.withASubst(f.args, args).withCSubst(f.retC, retC))
+        case AppF(fun, retC, args) => AppF(s.aSubst(fun), s.cSubst(retC), args map s.aSubst)
+        case If(cond, args, thenC, elseC) => If(cond, args map s.aSubst, s.cSubst(thenC), s.cSubst(elseC))
+        case Halt(arg) => Halt(s.aSubst(arg))
+      }
 
       (i + 1, fixedPoint(inlineT(tree)(State(census(tree))))(shrink))
     }
