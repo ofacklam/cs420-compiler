@@ -190,12 +190,12 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
         case LetP(name, prim, args, body) => LetP(name, prim, args map s.aSubst, inlineT(body))
         case LetC(cnts, body) =>
           val toInline = cnts.filter(c => size(c.body) <= cntLimit)
-          val newState = s.withCnts(toInline map copyC)
+          val newState = s.withCnts(toInline.map(copyC(_, s.aSubst, s.cSubst)))
           val tfCnts = cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
           LetC(tfCnts, inlineT(body)(newState))
         case LetF(funs, body) =>
           val toInline = funs.filter(f => size(f.body) <= funLimit)
-          val newState = s.withFuns(toInline map copyF)
+          val newState = s.withFuns(toInline.map(copyF(_, s.aSubst, s.cSubst)))
           val tfFuns = funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(newState)))
           LetF(tfFuns, inlineT(body)(newState))
         case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
@@ -302,32 +302,79 @@ object CPSOptimizerHigh extends CPSOptimizer(SymbolicCPSTreeModule)
   private[this] implicit def l3IntToLit(i: L3Int): Literal = IntLit(i)
   private[this] implicit def intToLit(i: Int): Literal = IntLit(L3Int(i))
 
-  protected val impure: ValuePrimitive => Boolean = ???
+  protected val impure: ValuePrimitive => Boolean = Set(BlockSet, ByteRead, ByteWrite)
 
-  protected val unstable: ValuePrimitive => Boolean = ???
+  protected val unstable: ValuePrimitive => Boolean = {
+    case BlockAlloc(_) | BlockGet | ByteRead => true
+    case _ => false
+  }
 
-  protected val blockAllocTag: PartialFunction[ValuePrimitive, Literal] = ???
-  protected val blockTag: ValuePrimitive = ???
-  protected val blockLength: ValuePrimitive = ???
+  protected val blockAllocTag: PartialFunction[ValuePrimitive, Literal] = {
+    case BlockAlloc(t) => t
+  }
+  protected val blockTag: ValuePrimitive = BlockTag
+  protected val blockLength: ValuePrimitive = BlockLength
 
-  protected val identity: ValuePrimitive = ???
+  protected val identity: ValuePrimitive = Id
 
-  protected val leftNeutral: Set[(Literal, ValuePrimitive)] = ???
-  protected val rightNeutral: Set[(ValuePrimitive, Literal)] = ???
+  protected val leftNeutral: Set[(Literal, ValuePrimitive)] =
+    Set((0, IntAdd), (1, IntMul), (~0, IntBitwiseAnd), (0, IntBitwiseOr), (0, IntBitwiseXOr))
+  protected val rightNeutral: Set[(ValuePrimitive, Literal)] =
+    Set((IntAdd, 0), (IntSub, 0), (IntMul, 1), (IntDiv, 1),
+      (IntShiftLeft, 0), (IntShiftRight, 0),
+      (IntBitwiseAnd, ~0), (IntBitwiseOr, 0), (IntBitwiseXOr, 0))
 
-  protected val leftAbsorbing: Set[(Literal, ValuePrimitive)] = ???
-  protected val rightAbsorbing: Set[(ValuePrimitive, Literal)] = ???
+  protected val leftAbsorbing: Set[(Literal, ValuePrimitive)] =
+    Set((0, IntMul), (0, IntDiv),
+      (0, IntShiftLeft), (0, IntShiftRight),
+      (0, IntBitwiseAnd), (~0, IntBitwiseOr))
+  protected val rightAbsorbing: Set[(ValuePrimitive, Literal)] =
+    Set((IntMul, 0), (IntBitwiseAnd, 0), (IntBitwiseOr, ~0))
 
-  protected val sameArgReduce: PartialFunction[(ValuePrimitive, Atom), Atom] =
-    ???
+  protected val sameArgReduce: PartialFunction[(ValuePrimitive, Atom), Atom] = {
+    case (IntSub | IntMod | IntBitwiseXOr, _) => AtomL(0)
+    case (IntDiv, _) => AtomL(1)
+    case (IntBitwiseAnd | IntBitwiseOr, a) => a
+  }
 
-  protected val sameArgReduceC: PartialFunction[TestPrimitive, Boolean] = ???
+  protected val sameArgReduceC: PartialFunction[TestPrimitive, Boolean] = {
+    case Eq | IntLe => true
+    case IntLt => false
+  }
 
   protected val vEvaluator: PartialFunction[(ValuePrimitive, Seq[Literal]),
-                                            Literal] = ???
+                                            Literal] = {
+    case (IntAdd, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x + y
+    case (IntSub, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x - y
+    case (IntMul, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x * y
+    case (IntDiv, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) if y != 0 => x / y
+    case (IntMod, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) if y != 0 => x % y
+
+    case (IntShiftLeft, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x << y
+    case (IntShiftRight, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x >> y
+    case (IntBitwiseAnd, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x & y
+    case (IntBitwiseOr, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x | y
+    case (IntBitwiseXOr, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x ^ y
+
+    case (IntToChar, Seq(IntLit(L3Int(x)))) => CharLit(x)
+    case (CharToInt, Seq(CharLit(x))) => x
+  }
 
   protected val cEvaluator: PartialFunction[(TestPrimitive, Seq[Literal]),
-                                            Boolean] = ???
+                                            Boolean] = {
+    case (IntLe, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x <= y
+    case (IntLt, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x < y
+    case (Eq, Seq(x, y)) => x == y
+    case (BlockP, _) => false
+    case (IntP, Seq(IntLit(_))) => true
+    case (IntP, _) => false
+    case (CharP, Seq(CharLit(_))) => true
+    case (CharP, _) => false
+    case (BoolP, Seq(BooleanLit(_))) => true
+    case (BoolP, _) => false
+    case (UnitP, Seq(UnitLit)) => true
+    case (UnitP, _) => false
+  }
 }
 
 object CPSOptimizerLow extends CPSOptimizer(SymbolicCPSTreeModuleLow)
