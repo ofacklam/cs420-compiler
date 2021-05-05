@@ -190,7 +190,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
         case LetP(name, prim, args, body) => LetP(name, prim, args map s.aSubst, inlineT(body))
         case LetC(cnts, body) =>
           val toInline = cnts.filter(c => size(c.body) <= cntLimit)
-          val newState = s.withCnts(toInline.map(copyC(_, s.aSubst, s.cSubst)))
+          val newState = s.withCnts(toInline)
           val tfCnts = cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
           LetC(tfCnts, inlineT(body)(newState))
         case LetF(funs, body) =>
@@ -200,11 +200,13 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
           LetF(tfFuns, inlineT(body)(newState))
         case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
           val c = s.cEnv(s.cSubst(cnt))
-          inlineT(c.body)(s.withASubst(c.args, args))
+          val newState = s.withASubst(c.args, args)
+          copyT(c.body, newState.aSubst, newState.cSubst)
         case AppC(cnt, args) => AppC(s.cSubst(cnt), args map s.aSubst)
         case AppF(fun, retC, args) if s.aSubst(fun).asName.nonEmpty && s.fEnv.contains(s.aSubst(fun).asName.get) =>
           val f = s.fEnv(s.aSubst(fun).asName.get)
-          inlineT(f.body)(s.withASubst(f.args, args).withCSubst(f.retC, retC))
+          val newState = s.withASubst(f.args, args).withCSubst(f.retC, retC)
+          copyT(f.body, newState.aSubst, newState.cSubst)
         case AppF(fun, retC, args) => AppF(s.aSubst(fun), s.cSubst(retC), args map s.aSubst)
         case If(cond, args, thenC, elseC) => If(cond, args map s.aSubst, s.cSubst(thenC), s.cSubst(elseC))
         case Halt(arg) => Halt(s.aSubst(arg))
@@ -344,17 +346,17 @@ object CPSOptimizerHigh extends CPSOptimizer(SymbolicCPSTreeModule)
 
   protected val vEvaluator: PartialFunction[(ValuePrimitive, Seq[Literal]),
                                             Literal] = {
-    case (IntAdd, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x + y
-    case (IntSub, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x - y
-    case (IntMul, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x * y
-    case (IntDiv, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) if y != 0 => x / y
-    case (IntMod, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) if y != 0 => x % y
+    case (IntAdd, Seq(IntLit(x), IntLit(y))) => x + y
+    case (IntSub, Seq(IntLit(x), IntLit(y))) => x - y
+    case (IntMul, Seq(IntLit(x), IntLit(y))) => x * y
+    case (IntDiv, Seq(IntLit(x), IntLit(y))) if y.toInt != 0 => x / y
+    case (IntMod, Seq(IntLit(x), IntLit(y))) if y.toInt != 0 => x % y
 
-    case (IntShiftLeft, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x << y
-    case (IntShiftRight, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x >> y
-    case (IntBitwiseAnd, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x & y
-    case (IntBitwiseOr, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x | y
-    case (IntBitwiseXOr, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x ^ y
+    case (IntShiftLeft, Seq(IntLit(x), IntLit(y))) => x << y
+    case (IntShiftRight, Seq(IntLit(x), IntLit(y))) => x >> y
+    case (IntBitwiseAnd, Seq(IntLit(x), IntLit(y))) => x & y
+    case (IntBitwiseOr, Seq(IntLit(x), IntLit(y))) => x | y
+    case (IntBitwiseXOr, Seq(IntLit(x), IntLit(y))) => x ^ y
 
     case (IntToChar, Seq(IntLit(L3Int(x)))) => CharLit(x)
     case (CharToInt, Seq(CharLit(x))) => x
@@ -362,8 +364,8 @@ object CPSOptimizerHigh extends CPSOptimizer(SymbolicCPSTreeModule)
 
   protected val cEvaluator: PartialFunction[(TestPrimitive, Seq[Literal]),
                                             Boolean] = {
-    case (IntLe, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x <= y
-    case (IntLt, Seq(IntLit(L3Int(x)), IntLit(L3Int(y)))) => x < y
+    case (IntLe, Seq(IntLit(x), IntLit(y))) => x <= y
+    case (IntLt, Seq(IntLit(x), IntLit(y))) => x < y
     case (Eq, Seq(x, y)) => x == y
     case (BlockP, _) => false
     case (IntP, Seq(IntLit(_))) => true
