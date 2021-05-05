@@ -57,6 +57,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
 
   private def shrink(tree: Tree, s: State): Tree = tree match {
     case LetP(n, p, _, b) if s.dead(n) && !impure(p) => shrink(b, s)
+    case LetP(n, `identity`, Seq(a), b) => shrink(b, s.withASubst(n, a))
     case LetP(n, p, a, b) if s.eInvEnv.contains(p, a map s.aSubst) && !impure(p) && !unstable(p) =>
       shrink(b, s.withASubst(n, s.eInvEnv(p, a map s.aSubst)))
     case LetP(n, p, a, b) if doCFLitV(p, a) =>
@@ -79,7 +80,8 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
       val regular = nonDead.filterNot(c => s.appliedOnce(c.name))
       val newState = s.withCnts(toInline)
       val shrunkCnts = regular.map(c => Cnt(c.name, c.args, shrink(c.body, newState)))
-      LetC(shrunkCnts, shrink(body, newState))
+      if(shrunkCnts.nonEmpty) LetC(shrunkCnts, shrink(body, newState))
+      else shrink(body, newState)
 
     case LetF(funs, body) =>
       val nonDead = funs.filterNot(f => s.dead(f.name))
@@ -87,7 +89,8 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
       val regular = nonDead.filterNot(f => s.appliedOnce(f.name))
       val newState = s.withFuns(toInline)
       val shrunkFuns = regular.map(f => Fun(f.name, f.retC, f.args, shrink(f.body, newState)))
-      LetF(shrunkFuns, shrink(body, newState))
+      if(shrunkFuns.nonEmpty) LetF(shrunkFuns, shrink(body, newState))
+      else shrink(body, newState)
 
     case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
       val c = s.cEnv(s.cSubst(cnt))
@@ -191,12 +194,12 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
         case LetC(cnts, body) =>
           val toInline = cnts.filter(c => size(c.body) <= cntLimit)
           val newState = s.withCnts(toInline)
-          val tfCnts = cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
+          val tfCnts = cnts.map(copyC(_, newState.aSubst, newState.cSubst))//cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
           LetC(tfCnts, inlineT(body)(newState))
         case LetF(funs, body) =>
           val toInline = funs.filter(f => size(f.body) <= funLimit)
-          val newState = s.withFuns(toInline.map(copyF(_, s.aSubst, s.cSubst)))
-          val tfFuns = funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(newState)))
+          val newState = s.withFuns(toInline)
+          val tfFuns = funs.map(copyF(_, newState.aSubst, newState.cSubst))//funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(newState)))
           LetF(tfFuns, inlineT(body)(newState))
         case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
           val c = s.cEnv(s.cSubst(cnt))

@@ -15,6 +15,7 @@ object Main {
       CL3ToCPSTranslator
         andThen treePrinter("---------- Before optimization")
         andThen CPSOptimizerHigh
+        andThen treePrinter("---------- Before value representation")
         andThen CPSValueRepresenter
         andThen treePrinter("---------- After value representation")
         andThen CPSHoister
