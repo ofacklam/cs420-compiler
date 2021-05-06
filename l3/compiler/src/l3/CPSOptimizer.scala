@@ -14,7 +14,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
 
   private case class Count(applied: Int = 0, asValue: Int = 0, blockSet: Int = 0)
 
-  private case class Block(name: Name, dead: Boolean, immutable: Boolean, values: Map[Int, Atom])
+  private case class Block(name: Name, dead: Boolean, immutable: Boolean, values: Map[Atom, Atom])
 
   private case class State(
     census: Map[Name, Count],
@@ -65,17 +65,6 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   private def shrink(tree: Tree, s: State): Tree = tree match {
     case LetP(n, p, _, b) if s.dead(n) && !impure(p) => shrink(b, s)
     case LetP(n, `identity`, Seq(a), b) => shrink(b, s.withASubst(n, a))
-    case LetP(n, p, a, b) if blockAllocTag.isDefinedAt(p) =>
-      val tag = blockAllocTag.apply(p)
-      val immutable = tag == BlockTag.String || tag == BlockTag.Function
-      val dead = s.deadBlock(n)
-      val newState = s.withBlock(Block(n, dead, immutable, Map.empty))
-      if(dead) shrink(b, newState)
-      else {
-        val subArgs = a map s.aSubst
-        LetP(n, p, subArgs, shrink(b, newState.withExp(n, p, subArgs)))
-      }
-    case LetP(_, `blockSet`, Seq(a, _, _), b) if a.asName.flatMap(s.bEnv.get).exists(_.dead) => shrink(b, s)
     case LetP(n, p, a, b) if s.eInvEnv.contains(p, a map s.aSubst) && !impure(p) && !unstable(p) =>
       shrink(b, s.withASubst(n, s.eInvEnv(p, a map s.aSubst)))
     case LetP(n, p, a, b) if doCFLitV(p, a) =>
@@ -88,6 +77,24 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
     case LetP(n, p, Seq(a, AtomL(l)), b) if rightNeutral.contains(p, l) => shrink(b, s.withASubst(n, a))
     case LetP(n, p, Seq(AtomL(l), _), b) if leftAbsorbing.contains(l, p) => shrink(b, s.withASubst(n, l))
     case LetP(n, p, Seq(_, AtomL(l)), b) if rightAbsorbing.contains(p, l) => shrink(b, s.withASubst(n, l))
+    case LetP(n, p, a, b) if blockAllocTag.isDefinedAt(p) =>
+      val tag = blockAllocTag.apply(p)
+      val immutable = tag == BlockTag.String || tag == BlockTag.Function
+      val dead = s.deadBlock(n)
+      val newState = s.withBlock(Block(n, dead, immutable, Map.empty))
+      if(dead) shrink(b, newState)
+      else LetP(n, p, a map s.aSubst, shrink(b, newState))
+    case LetP(n, `blockSet`, Seq(a, i, v), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).nonEmpty =>
+      val blk = s.bEnv(s.aSubst(a).asName.get)
+      if(blk.dead) shrink(b, s)
+      else {
+        val newBlk = blk.copy(values = blk.values + (s.aSubst(i) -> s.aSubst(v)))
+        LetP(n, blockSet, Seq(a, i, v) map s.aSubst, shrink(b, s.withBlock(newBlk)))
+      }
+    case LetP(n, `blockGet`, Seq(a, i), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).exists(_.immutable)
+                                            && s.bEnv(s.aSubst(a).asName.get).values.contains(s.aSubst(i)) =>
+      val value = s.bEnv(s.aSubst(a).asName.get).values(s.aSubst(i))
+      shrink(b, s.withASubst(n, value))
     case LetP(n, p, a, b) =>
       val subArgs = a map s.aSubst
       LetP(n, p, subArgs, shrink(b, s.withExp(n, p, subArgs)))
@@ -308,6 +315,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   protected val blockTag: ValuePrimitive
   protected val blockLength: ValuePrimitive
   protected val blockSet: ValuePrimitive
+  protected val blockGet: ValuePrimitive
 
   protected val identity: ValuePrimitive
 
@@ -350,6 +358,7 @@ object CPSOptimizerHigh extends CPSOptimizer(SymbolicCPSTreeModule)
   protected val blockTag: ValuePrimitive = BlockTag
   protected val blockLength: ValuePrimitive = BlockLength
   protected val blockSet: ValuePrimitive = BlockSet
+  protected val blockGet: ValuePrimitive = BlockGet
 
   protected val identity: ValuePrimitive = Id
 
@@ -438,6 +447,7 @@ object CPSOptimizerLow extends CPSOptimizer(SymbolicCPSTreeModuleLow)
   protected val blockTag: ValuePrimitive = BlockTag
   protected val blockLength: ValuePrimitive = BlockLength
   protected val blockSet: ValuePrimitive = BlockSet
+  protected val blockGet: ValuePrimitive = BlockGet
 
   protected val identity: ValuePrimitive = Id
 
