@@ -182,7 +182,7 @@ object CL3ToCPSTranslator extends (S.Tree => C.Tree) {
    * Translates a function definition
    */
   private def transformFun(f: S.Fun): C.Fun = {
-    val contName = Symbol.fresh("funContArg")
+    val contName = Symbol.fresh(s"ret-${f.name}")
     val b = tail(f.body)(contName)
     C.Fun(f.name, contName, f.args, b)
   }
