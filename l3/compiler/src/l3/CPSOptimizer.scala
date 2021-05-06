@@ -1,6 +1,6 @@
 package l3
 
-import scala.collection.mutable.{ Map => MutableMap }
+import scala.collection.mutable.{Map => MutableMap}
 
 abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   (val treeModule: T) {
@@ -12,7 +12,9 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
     fixedPoint(simplifiedTree, 8) { t => inline(t, maxSize) }
   }
 
-  private case class Count(applied: Int = 0, asValue: Int = 0)
+  private case class Count(applied: Int = 0, asValue: Int = 0, blockSet: Int = 0)
+
+  private case class Block(name: Name, dead: Boolean, immutable: Boolean, values: Map[Int, Atom])
 
   private case class State(
     census: Map[Name, Count],
@@ -20,12 +22,15 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
     cSubst: Subst[Name] = emptySubst,
     eInvEnv: Map[(ValuePrimitive, Seq[Atom]), Atom] = Map.empty,
     cEnv: Map[Name, Cnt] = Map.empty,
-    fEnv: Map[Name, Fun] = Map.empty) {
+    fEnv: Map[Name, Fun] = Map.empty,
+    bEnv: Map[Name, Block] = Map.empty) {
 
     def dead(s: Name): Boolean =
       ! census.contains(s)
     def appliedOnce(s: Name): Boolean =
-      census.get(s).contains(Count(applied = 1, asValue = 0))
+      census.get(s).contains(Count(applied = 1, asValue = 0, blockSet = 0))
+    def deadBlock(s: Name): Boolean =
+      census(s).applied == 0 && census(s).asValue == census(s).blockSet
 
     def withASubst(from: Atom, to: Atom): State =
       copy(aSubst = aSubst + (from -> aSubst(to)))
@@ -48,6 +53,8 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
       copy(cEnv = cEnv ++ (cnts.map(_.name) zip cnts))
     def withFuns(funs: Seq[Fun]): State =
       copy(fEnv = fEnv ++ (funs.map(_.name) zip funs))
+    def withBlock(blk: Block): State =
+      copy(bEnv = bEnv + (blk.name -> blk))
   }
 
   // Shrinking optimizations
@@ -58,6 +65,17 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   private def shrink(tree: Tree, s: State): Tree = tree match {
     case LetP(n, p, _, b) if s.dead(n) && !impure(p) => shrink(b, s)
     case LetP(n, `identity`, Seq(a), b) => shrink(b, s.withASubst(n, a))
+    case LetP(n, p, a, b) if blockAllocTag.isDefinedAt(p) =>
+      val tag = blockAllocTag.apply(p)
+      val immutable = tag == BlockTag.String || tag == BlockTag.Function
+      val dead = s.deadBlock(n)
+      val newState = s.withBlock(Block(n, dead, immutable, Map.empty))
+      if(dead) shrink(b, newState)
+      else {
+        val subArgs = a map s.aSubst
+        LetP(n, p, subArgs, shrink(b, newState.withExp(n, p, subArgs)))
+      }
+    case LetP(_, `blockSet`, Seq(a, _, _), b) if a.asName.flatMap(s.bEnv.get).exists(_.dead) => shrink(b, s)
     case LetP(n, p, a, b) if s.eInvEnv.contains(p, a map s.aSubst) && !impure(p) && !unstable(p) =>
       shrink(b, s.withASubst(n, s.eInvEnv(p, a map s.aSubst)))
     case LetP(n, p, a, b) if doCFLitV(p, a) =>
@@ -244,7 +262,18 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
     def incValUseA(atom: Atom): Unit =
       atom.asName.foreach(incValUseN(_))
 
+    def incBlockSetUseN(name: Name): Unit = {
+      val currCount = census(name)
+      census(name) = currCount.copy(blockSet = currCount.blockSet + 1)
+      rhs.remove(name).foreach(addToCensus)
+    }
+
+    def incBlockSetUseA(atom: Atom): Unit =
+      atom.asName.foreach(incBlockSetUseN(_))
+
     def addToCensus(tree: Tree): Unit = (tree: @unchecked) match {
+      case LetP(_, `blockSet`, args, body) =>
+        incBlockSetUseA(args.head); args foreach incValUseA; addToCensus(body)
       case LetP(_, _, args, body) =>
         args foreach incValUseA; addToCensus(body)
       case LetC(cnts, body) =>
@@ -278,6 +307,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
   protected val blockAllocTag: PartialFunction[ValuePrimitive, Literal]
   protected val blockTag: ValuePrimitive
   protected val blockLength: ValuePrimitive
+  protected val blockSet: ValuePrimitive
 
   protected val identity: ValuePrimitive
 
@@ -319,6 +349,7 @@ object CPSOptimizerHigh extends CPSOptimizer(SymbolicCPSTreeModule)
   }
   protected val blockTag: ValuePrimitive = BlockTag
   protected val blockLength: ValuePrimitive = BlockLength
+  protected val blockSet: ValuePrimitive = BlockSet
 
   protected val identity: ValuePrimitive = Id
 
@@ -406,6 +437,7 @@ object CPSOptimizerLow extends CPSOptimizer(SymbolicCPSTreeModuleLow)
   }
   protected val blockTag: ValuePrimitive = BlockTag
   protected val blockLength: ValuePrimitive = BlockLength
+  protected val blockSet: ValuePrimitive = BlockSet
 
   protected val identity: ValuePrimitive = Id
 
