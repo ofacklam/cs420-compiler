@@ -219,12 +219,12 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
         case LetC(cnts, body) =>
           val toInline = cnts.filter(c => size(c.body) <= cntLimit)
           val newState = s.withCnts(toInline)
-          val tfCnts = cnts.map(copyC(_, newState.aSubst, newState.cSubst))//cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
+          val tfCnts = cnts.map(c => Cnt(c.name, c.args, inlineT(c.body)(newState)))
           LetC(tfCnts, inlineT(body)(newState))
         case LetF(funs, body) =>
           val toInline = funs.filter(f => size(f.body) <= funLimit)
           val newState = s.withFuns(toInline)
-          val tfFuns = funs.map(copyF(_, newState.aSubst, newState.cSubst))//funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(newState)))
+          val tfFuns = funs.map(f => Fun(f.name, f.retC, f.args, inlineT(f.body)(s)))
           LetF(tfFuns, inlineT(body)(newState))
         case AppC(cnt, args) if s.cEnv.contains(s.cSubst(cnt)) =>
           val c = s.cEnv(s.cSubst(cnt))
