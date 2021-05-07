@@ -14,7 +14,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
 
   private case class Count(applied: Int = 0, asValue: Int = 0, blockSet: Int = 0)
 
-  private case class Block(name: Name, dead: Boolean, immutable: Boolean, values: Map[Atom, Atom])
+  private case class Block(name: Name, dead: Boolean, immutable: Boolean, values: Map[Atom, Atom], tag: Literal, len: Atom)
 
   private case class State(
     census: Map[Name, Count],
@@ -77,13 +77,13 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
     case LetP(n, p, Seq(a, AtomL(l)), b) if rightNeutral.contains(p, l) => shrink(b, s.withASubst(n, a))
     case LetP(n, p, Seq(AtomL(l), _), b) if leftAbsorbing.contains(l, p) => shrink(b, s.withASubst(n, l))
     case LetP(n, p, Seq(_, AtomL(l)), b) if rightAbsorbing.contains(p, l) => shrink(b, s.withASubst(n, l))
-    case LetP(n, p, a, b) if blockAllocTag.isDefinedAt(p) =>
+    case LetP(n, p, Seq(a), b) if blockAllocTag.isDefinedAt(p) =>
       val tag = blockAllocTag.apply(p)
       val immutable = tag == BlockTag.String || tag == BlockTag.Function
       val dead = s.deadBlock(n)
-      val newState = s.withBlock(Block(n, dead, immutable, Map.empty))
+      val newState = s.withBlock(Block(n, dead, immutable, Map.empty, tag, a))
       if(dead) shrink(b, newState)
-      else LetP(n, p, a map s.aSubst, shrink(b, newState))
+      else LetP(n, p, Seq(s.aSubst(a)), shrink(b, newState))
     case LetP(n, `blockSet`, Seq(a, i, v), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).nonEmpty =>
       val blk = s.bEnv(s.aSubst(a).asName.get)
       if(blk.dead) shrink(b, s)
@@ -95,6 +95,12 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
                                             && s.bEnv(s.aSubst(a).asName.get).values.contains(s.aSubst(i)) =>
       val value = s.bEnv(s.aSubst(a).asName.get).values(s.aSubst(i))
       shrink(b, s.withASubst(n, value))
+    case LetP(n, `blockTag`, Seq(a), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).nonEmpty =>
+      val tag = s.bEnv(s.aSubst(a).asName.get).tag
+      shrink(b, s.withASubst(n, tag))
+    case LetP(n, `blockLength`, Seq(a), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).nonEmpty =>
+      val len = s.bEnv(s.aSubst(a).asName.get).len
+      shrink(b, s.withASubst(n, len))
     case LetP(n, p, a, b) =>
       val subArgs = a map s.aSubst
       LetP(n, p, subArgs, shrink(b, s.withExp(n, p, subArgs)))
