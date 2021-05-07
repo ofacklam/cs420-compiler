@@ -81,7 +81,7 @@ abstract class CPSOptimizer[T <: CPSTreeModule { type Name = Symbol }]
       val tag = blockAllocTag.apply(p)
       val immutable = tag == BlockTag.String || tag == BlockTag.Function
       val dead = s.deadBlock(n)
-      val newState = s.withBlock(Block(n, dead, immutable, Map.empty, tag, a))
+      val newState = s.withBlock(Block(n, dead, immutable, Map.empty, tag, s.aSubst(a)))
       if(dead) shrink(b, newState)
       else LetP(n, p, Seq(s.aSubst(a)), shrink(b, newState))
     case LetP(n, `blockSet`, Seq(a, i, v), b) if s.aSubst(a).asName.flatMap(s.bEnv.get).nonEmpty => // handling blockSet (dead block elimination + value tracking)
