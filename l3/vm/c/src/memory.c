@@ -2,15 +2,28 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
+#include <math.h>
 
 #include "memory.h"
 #include "fail.h"
 
 static value_t* memory_start = NULL;
 static value_t* memory_end = NULL;
-static value_t* free_boundary = NULL;
+static value_t* bitmap = NULL;
+static value_t* heap_start = NULL;
 
 #define HEADER_SIZE 1
+
+// Virtual <-> physical address translation
+
+static void* addr_v_to_p(value_t v_addr) {
+    return (char*)memory_start + v_addr;
+}
+
+static value_t addr_p_to_v(void* p_addr) {
+    assert(memory_start <= p_addr && p_addr <= memory_end);
+    return (value_t)((char*)p_addr - (char*)memory_start);
+}
 
 // Header management
 
@@ -26,8 +39,14 @@ static value_t header_unpack_size(value_t header) {
   return header >> 8;
 }
 
+// Bitmap management
+
+
+
+// Interface implementation
+
 char* memory_get_identity() {
-  return "no GC (memory is never freed)";
+  return "mark-and-sweep GC";
 }
 
 void memory_setup(size_t total_byte_size) {
@@ -40,7 +59,7 @@ void memory_setup(size_t total_byte_size) {
 void memory_cleanup() {
   assert(memory_start != NULL);
   free(memory_start);
-  memory_start = memory_end = free_boundary = NULL;
+  memory_start = memory_end = bitmap = heap_start = NULL;
 }
 
 void* memory_get_start() {
@@ -51,9 +70,17 @@ void* memory_get_end() {
   return memory_end;
 }
 
-void memory_set_heap_start(void* heap_start) {
-  assert(free_boundary == NULL);
-  free_boundary = heap_start;
+void memory_set_heap_start(void* hs) {
+  assert(bitmap == NULL && heap_start == NULL);
+  long free_words = memory_end - (value_t*) hs;
+  if(free_words <= 0)
+      fail("No memory left for heap");
+
+  size_t heap_words = (size_t) (32 * free_words / 33);
+  size_t bitmap_words = (size_t) ceil( heap_words / 32.);
+
+  bitmap = hs;
+  heap_start = bitmap + bitmap_words;
 }
 
 value_t* memory_allocate(tag_t tag, value_t size, roots_t* roots) {
