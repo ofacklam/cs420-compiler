@@ -109,7 +109,7 @@ static value_t* free_list_find(value_t size) {
 }
 
 // Allocation / de-allocation
-
+// TODO: clean block
 static value_t* try_allocate(tag_t tag, value_t size) {
     // find appropriate block
     value_t* block = free_list_find(size);
@@ -133,6 +133,71 @@ static value_t* try_allocate(tag_t tag, value_t size) {
     block[-HEADER_SIZE] = header_pack(tag, size);
 
     return block;
+}
+
+static void mark(value_t* block) {
+    if(block < heap_start || block >= memory_end || !bitmap_is_set(block)) // not allocated or already visited block
+        return;
+
+    bitmap_clear(block);
+    value_t size = memory_get_block_size(block);
+
+    for(value_t k = 0; k < size; k++) {
+        value_t potential_pointer = block[k];
+        if(0 == (potential_pointer & 0x03)) // it is of pointer form
+            mark(addr_v_to_p(potential_pointer));
+    }
+}
+
+static value_t* next_block(value_t* block) {
+    return block + memory_get_block_size(block) + HEADER_SIZE;
+}
+
+static uint8_t is_allocated_and_reachable(value_t* block) {
+    tag_t tag = memory_get_block_tag(block);
+    uint8_t bit_set = bitmap_is_set(block);
+    return tag != tag_None && !bit_set;
+}
+
+static void sweep() {
+    // clear all free lists
+    for(int k = 0; k < FREE_LIST_SIZE; k++)
+        free_list[k] = 0;
+
+    // sweep the entire heap
+    value_t* current_block = heap_start + HEADER_SIZE;
+    while(current_block < memory_end) {
+        // 2 cases
+        if(is_allocated_and_reachable(current_block)) { // allocated, reachable block -> keep it
+            bitmap_set(current_block);
+        } else { // free block -> coalesce adjacent & add to free list
+            value_t free_size = 0;
+            value_t* current_free = current_block;
+            while(current_free < memory_end && !is_allocated_and_reachable(current_free)) {
+                bitmap_clear(current_free);
+                free_size += memory_get_block_size(current_free) + HEADER_SIZE;
+                current_free = next_block(current_free);
+            }
+
+            free_size -= HEADER_SIZE;
+            current_block[-HEADER_SIZE] = header_pack(tag_None, free_size);
+
+            if(free_size >= MIN_BLOCK_SIZE) // add to free list if large enough
+                free_list_insert(current_block);
+        }
+
+        current_block = next_block(current_block);
+    }
+}
+
+static void collect_garbage(roots_t* roots) {
+    // mark from all roots
+    mark(roots->Ib);
+    mark(roots->Lb);
+    mark(roots->Ob);
+
+    // sweep
+    sweep();
 }
 
 // Interface implementation
@@ -182,7 +247,14 @@ void memory_set_heap_start(void* hs) {
 value_t* memory_allocate(tag_t tag, value_t size, roots_t* roots) {
   assert(heap_start != NULL);
 
+  // 1st allocation -> return if success
   value_t* block = try_allocate(tag, size);
+  if (block != memory_start)
+    return block;
+
+  // in case of out of memory -> do garbage collection & retry
+  collect_garbage(roots);
+  block = try_allocate(tag, size);
   if (block == memory_start)
     fail("no memory left (block of size %u requested)", size);
 
