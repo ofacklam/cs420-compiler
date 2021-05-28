@@ -109,7 +109,7 @@ static value_t* free_list_find(value_t size) {
 }
 
 // Allocation / de-allocation
-// TODO: clean block
+
 static value_t* try_allocate(tag_t tag, value_t size) {
     // find appropriate block
     value_t* block = free_list_find(size);
@@ -131,6 +131,10 @@ static value_t* try_allocate(tag_t tag, value_t size) {
 
     // set header
     block[-HEADER_SIZE] = header_pack(tag, size);
+
+    // clean block
+    for(value_t k = 0; k < size; k++)
+        block[k] = 0;
 
     return block;
 }
@@ -234,7 +238,7 @@ void memory_set_heap_start(void* hs) {
       fail("No memory left for heap");
 
   value_t heap_words = BITS_PER_WORD * (value_t) free_words / (BITS_PER_WORD + 1);
-  value_t bitmap_words = (value_t) ceil((double) heap_words / BITS_PER_WORD);
+  value_t bitmap_words = (heap_words / BITS_PER_WORD) + (heap_words % BITS_PER_WORD != 0);
 
   bitmap = hs;
   heap_start = bitmap + bitmap_words;
