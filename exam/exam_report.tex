@@ -131,7 +131,7 @@ The other translations can be easily adapted in a similar manner. We also introd
 \begin{description}
 \item \tran{\cl{(try }{\ts{e}{t}}{} \cl{catch (}{n}{)} \cl{}{\ts{e}{c}}{)}}{\ce}{\cv} = \\
 \cps{(\letc~}{\cps{(}{(\underline{c} \cps{(cnt }{(\underline{r}) \cv[r]}{)}) \\\hspace*{3.4em}(\underline{exc} \cps{(cnt }{(n) \tran{\ts{e}{c}}{\ce}{($\lambda$\ts{v}{c} \cps{(\appc~}{c \ts{v}{c}}{)})}}{)})}{)} \\\hspace*{1em}\tran{\ts{e}{t}}{($\lambda$\ts{v}{exc} \cps{(\appc~}{exc \ts{v}{exc}}{)})}{($\lambda$\ts{v}{t} \cps{(\appc~}{c \ts{v}{t}}{)})}}{)}
-\item \tran{\cl{(throw }{e}{)}}{\ce}{\cv} = \tran{e}{\ce}{\ce}
+\item \tran{\cl{(throw }{e}{)}}{\ce}{\cv} = \\\cps{(\letc~}{\cps{(}{(\underline{exc} \cps{(cnt }{(\underline{r}) \ce[r]}{)})}{)} \tran{e}{($\lambda$\ts{v}{e} \cps{(\appc~}{exc \ts{v}{e}}{)})}{($\lambda$v \cps{(\appc~}{exc v}{)})}}{)}
 \end{description}
 
 The entire program is translated with the relevant initial contexts, so as to have the program halt with an exit code of 0 in case of success, and an exit code of -1 in case of an error:
@@ -141,5 +141,28 @@ The entire program is translated with the relevant initial contexts, so as to ha
 \end{center}
 
 \section{Inlining}
+
+Thanks to our intermediate representation being in continuation passing style, the interaction of inlining with exception handling will not cause any issues, just like the interaction between inlining and the return statement goes smoothly.
+
+Consider the following example code:
+
+\cl{(def }{div \cl{(fun }{(a b)\\
+\hspace*{7em}\cl{(if }{\cl{(@}{= b 0}{)} \cl{(throw }{0}{)} \cl{(@}{/ a b}{)}}{)}}{)}}{)}\\
+\cl{(@}{byte-write \cl{(try }{(div 42 0)}{} \cl{catch }{(e) 0}{)}}{)}
+
+This will get compiled into the following CPS/\lang code:\footnote{I compiled this by hand so I'm guaranteeing that this is perfectly accurate}
+
+\cps{(\letf~}{\cps{(}{(div \cps{(fun }{(\underline{ret} \underline{exc} a b)\\
+\hspace*{8em}\cps{(\letc~}{\cps{(}{(\underline{c} \cps{(cnt }{(r) \cps{(\appc~}{ret r}{)}}{)})\\
+\hspace*{11.4em}(\underline{d} \cps{(cnt }{(r) \cps{(\appc~}{exc r}{)}}{)})\\
+\hspace*{11.4em}(\underline{ct} \cps{(cnt }{() \cps{(\letc~}{\cps{(}{(\underline{t} \cps{(cnt }{(r) \cps{(\appc~}{d r}{)}}{)})}{)} \cps{(\appc~}{t 0}{)}}{)}}{)})\\
+\hspace*{11.4em}(\underline{cf} \cps{(cnt }{() \cps{(\letp~}{\cps{(}{(\underline{n} \cps{(@}{/ a b}{)})}{)} \cps{(\appc~}{c n}{)}}{)}}{)})}{)}\\
+\hspace*{10em}\cps{(if (@}{= b 0}{) ct cf)}}{)}}{)})}{)}\\
+\hspace*{3em}\cps{(\letc~}{\cps{(}{(\underline{res} \cps{(cnt }{(r) \cps{(\letp~}{\cps{(}{(\underline{n} \cps{(@}{byte-write r}{)})}{)} \cps{(halt }{0}{)}}{)}}{)})\\
+\hspace*{6.4em}(\underline{exc} \cps{(cnt }{(e) \cps{(\appc~}{res 0}{)}}{)})}{)}\\
+\hspace*{5em}\cps{(\letc~}{\cps{(}{(\underline{fret} \cps{(cnt }{(r) \cps{(\appc~}{res r}{)}}{)})\\
+\hspace*{8.4em}(\underline{fexc} \cps{(cnt }{(r) \cps{(\appc~}{exc r}{)}}{)})}{)}\\
+\hspace*{7em}\cps{(\appf~}{div fret fexc 42 0}{)}}{)}}{)}}{)}
+
 
 \end{document}
