@@ -164,5 +164,23 @@ This will get compiled into the following CPS/\lang code:\footnote{I compiled th
 \hspace*{8.4em}(\underline{fexc} \cps{(cnt }{(r) \cps{(\appc~}{exc r}{)}}{)})}{)}\\
 \hspace*{7em}\cps{(\appf~}{div fret fexc 42 0}{)}}{)}}{)}}{)}
 
+When inlining, we will get the following result (other optimisations will also kick in of course):
+
+\cps{(\letc~}{\cps{(}{(\underline{res} \cps{(cnt }{(r) \cps{(\letp~}{\cps{(}{(\underline{n} \cps{(@}{byte-write r}{)})}{)} \cps{(halt }{0}{)}}{)}}{)})\\
+\hspace*{3.4em}(\underline{exc} \cps{(cnt }{(e) \cps{(\appc~}{res 0}{)}}{)})}{)}\\
+\hspace*{2em}\cps{(\letc~}{\cps{(}{(\underline{fret} \cps{(cnt }{(r) \cps{(\appc~}{res r}{)}}{)})\\
+\hspace*{5.4em}(\underline{fexc} \cps{(cnt }{(r) \cps{(\appc~}{exc r}{)}}{)})}{)}\\
+\hspace*{4em}\cps{(\letc~}{\cps{(}{(\underline{c} \cps{(cnt }{(r) \cps{(\appc~}{fret r}{)}}{)})\\
+\hspace*{7.4em}(\underline{d} \cps{(cnt }{(r) \cps{(\appc~}{fexc r}{)}}{)})\\
+\hspace*{7.4em}(\underline{ct} \cps{(cnt }{() \cps{(\letc~}{\cps{(}{(\underline{t} \cps{(cnt }{(r) \cps{(\appc~}{d r}{)}}{)})}{)} \cps{(\appc~}{t 0}{)}}{)}}{)})\\
+\hspace*{7.4em}(\underline{cf} \cps{(cnt }{() \cps{(\letp~}{\cps{(}{(\underline{n} \cps{(@}{/ 42 0}{)})}{)} \cps{(\appc~}{c n}{)}}{)}}{)})}{)}\\
+\hspace*{6em}\cps{(if (@}{= 0 0}{) ct cf)}}{)}
+}{)}}{)}
+
+As we can see, the return and exception continuations work perfectly with the inlining. The inlined function body will simply jump to the appropriate piece of code through an \code{\appc} call.
+
+\section*{Conclusion}
+
+In this short report, we have presented 2 new \lang instructions which add the exception handling feature to the language. We have shown how using an additional ``exception-context'' allows us to adapt the existing translation to CPS/\lang and extend it to include the new syntax. Finally we illustrated the way the continuation passing style with the exception continuation perfectly handles function inlining even in the case of exception handling.
 
 \end{document}
