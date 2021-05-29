@@ -150,7 +150,7 @@ Consider the following example code:
 \hspace*{7em}\cl{(if }{\cl{(@}{= b 0}{)} \cl{(throw }{0}{)} \cl{(@}{/ a b}{)}}{)}}{)}}{)}\\
 \cl{(@}{byte-write \cl{(try }{(div 42 0)}{} \cl{catch }{(e) 0}{)}}{)}
 
-This will get compiled into the following CPS/\lang code:\footnote{I compiled this by hand so I'm guaranteeing that this is perfectly accurate}
+This will get compiled into the following CPS/\lang code:\footnote{I compiled this by hand so I'm not guaranteeing that this is perfectly accurate}
 
 \cps{(\letf~}{\cps{(}{(div \cps{(fun }{(\underline{ret} \underline{exc} a b)\\
 \hspace*{8em}\cps{(\letc~}{\cps{(}{(\underline{c} \cps{(cnt }{(r) \cps{(\appc~}{ret r}{)}}{)})\\
