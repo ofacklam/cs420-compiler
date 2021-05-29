@@ -1,0 +1,145 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{stmaryrd}
+\usepackage{graphicx}
+\usepackage{lmodern}
+\usepackage[left=2cm,right=2cm,top=2cm,bottom=2cm]{geometry}
+
+\usepackage{siunitx}
+\usepackage{enumitem}
+\usepackage[skip=.38\baselineskip]{parskip}
+\usepackage[dvipsnames]{xcolor}   % for \textcolor
+\usepackage{listings}
+\definecolor{mGreen}{rgb}{0,0.4,0.1}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.58,0,0.82}
+\definecolor{backgroundColour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinelanguage
+	[ia64]{Assembler}
+	[x86masm]{Assembler}{
+	morekeywords={ld4,st4,br.ctop},
+	morecomment=[l]{//}
+}
+\lstset{
+	%backgroundcolor=\color{backgroundColour},   
+    commentstyle=\color{mGreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{mGray},
+    stringstyle=\color{mPurple},
+    %breakatwhitespace=false,                        
+    %captionpos=b,
+    %keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    %tabsize=8,	
+    language=[ia64]Assembler,    
+  	basicstyle=\small\ttfamily,
+  	columns=fullflexible,
+  	frame=single,
+  	breaklines=true,
+  	postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+}
+
+% for multi-figures
+\usepackage{subcaption}
+
+% for graphs
+%\usepackage{tikz}
+%\usepackage{tkz-graph}
+%\input{tkz-graph-patch}
+%\usepackage{tikz-qtree}
+%\usetikzlibrary{calc, arrows, positioning}
+
+% custom commands
+\newcommand{\multilinecell}[1]{\begin{tabular}{@{}c@{}}#1\end{tabular}}
+\newcommand{\lang}{L\textsubscript{3}~}
+\newcommand{\nil}{\textit{nil}}
+\newcommand{\cl}[3]{\texttt{\textcolor{OliveGreen}{#1}#2\textcolor{OliveGreen}{#3}}}
+\newcommand{\cps}[3]{\texttt{\textcolor{BurntOrange}{#1}#2\textcolor{BurntOrange}{#3}}}
+\newcommand{\ts}[2]{#1\textsubscript{#2}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\tran}[3]{\code{\textlbrackdbl #1\textrbrackdbl #2 #3}}
+\newcommand{\cv}{\ts{C}{v}}
+\newcommand{\ce}{\ts{C}{e}}
+\newcommand{\letp}{\ts{let}{p}}
+\newcommand{\letc}{\ts{let}{c}}
+\newcommand{\letf}{\ts{let}{f}}
+\newcommand{\appc}{\ts{app}{c}}
+\newcommand{\appf}{\ts{app}{f}}
+
+\author{Olivér Facklam}
+\title{\textsc{CS420 Exam Report\\Exceptions in \lang}}
+
+
+\begin{document}
+\maketitle
+
+\begin{quote}
+%\centering
+\textsc{\large Exam question:}
+
+Assume we wanted to add exceptions to the \lang language, using constructs similar to Java's \texttt{throw} and \texttt{try}/\texttt{catch} statements. To do this, we could add an additional continuation argument to all functions, the exception-handler continuation. A function that wanted to throw an exception would invoke that continuation instead of the return continuation. Explain this idea in more details, in particular how you would translate the \texttt{throw} and \texttt{try}/\texttt{catch} statements. Explain also how the translation of these statements would interact with inlining. For example, what would happen if a function throwing some exception was inlined into one catching it.
+\end{quote}
+
+
+\section*{Introduction}
+
+This report describes how to add exceptions and exception-handling syntax to the \lang language; how these new features will be represented in our CPS/\lang intermediate representation; and finally what the interaction with inlining is.
+
+\section{\lang syntax}
+
+We introduce the following \texttt{throw} syntax: \cl{(throw }{e}{)}. This expression has no value, but raises an exception with value \texttt{e}. If there is no exception-handling code further up in the call stack, the program will ``crash'', \textit{i.e.} it will halt with an exit code of -1 to indicate an error.
+
+In order to allow exception handling, we also introduce the following syntax: 
+
+\begin{center}
+\cl{(try }{\ts{b}{t}}{} \cl{catch(}{n}{)} \cl{}{\ts{b}{c}}{)}
+\end{center}
+
+This code will start by evaluating the body \code{\ts{b}{t}} of the \code{try} block. In case an exception is raised, the exception value is bound to the literal \code{n} and the body \code{\ts{b}{c}} of the \code{catch} block is executed. The value of the whole expression is either the value of \code{\ts{b}{t}} if there is no exception, or the value of \code{\ts{b}{c}} otherwise. 
+If an exception occurs inside \code{\ts{b}{c}} it will be propagated up in the call stack.
+
+\section{CPS/\lang implementation}
+
+Now that this new \lang syntax is defined, we need to describe how the translation to the CPS/\lang intermediate representation is adapted.
+
+In the translation presented in class, expression values are propagated by using a ``translation context''. The translator of a parent node will give such a context to the translator of a sub-expression, which will fill the hole in the context with the value of the sub-expression.
+
+Since now every expression not only has a value, but can also raise an exception, we need a second translation context which allows propagation of the exception values.
+
+The new C\lang to CPS/\lang translator is of the form: \tran{e}{\ts{C}{exception}}{\ts{C}{value}}. It translates the expression \code{e}, giving its value to the value-context \code{\ts{C}{value}}, and giving any exception that is raised to the exception-context \code{\ts{C}{exception}}.
+
+Here is how the current translations have to be adapted:
+\begin{description}
+\item \tran{a}{\ce}{\cv} with \code{a} an atom = \code{\cv[a]}
+\item \tran{\cl{(let }{((\ts{n}{1} \ts{e}{1})(\ts{n}{2} \ts{e}{2})...) e}{)}}{\ce}{\cv} = \\ \tran{\ts{e}{1}}{\ce}{($\lambda$\ts{v}{1} \cps{(\letp~}{((\ts{n}{1} (id \ts{v}{1}))) \tran{\cl{(let }{((\ts{n}{2} \ts{e}{2})...) e}{)}}{\ce}{\cv}}{)})} \footnote{It might be better to create a single continuation containing the exception context and applying it, instead of duplicating the exception context}
+\item \tran{\cl{(let }{() e}{)}}{\ce}{\cv} = \tran{e}{\ce}{\cv}
+\item \tran{\cl{(letrec }{\cl{(}{(\ts{f}{1} \cl{(fun }{(\ts{n}{11}\ts{n}{12}...)\ts{e}{1}}{)})...}{)} e}{)}}{\ce}{\cv} = \\ \cps{(\letf~}{\cps{(}{(\ts{f}{1} \cps{(fun }{(\underline{c} \underline{d} \ts{n}{11}\ts{n}{12}...) \\\hspace*{7em} \tran{\ts{e}{1}}{($\lambda$\ts{v}{exc1} \cps{(\appc~}{d \ts{v}{exc1}}{)})}{($\lambda$\ts{v}{val1} \cps{(\appc~}{c \ts{v}{val1}}{)})}}{)})\\\hspace*{3.4em}...}{)} \\\tran{e}{\ce}{\cv}}{)}
+\item \tran{\cl{(}{e \ts{e}{1}...}{)}}{\ce}{\cv} = \\\cps{(\letc~}{\cps{(}{(\underline{exc} \cps{(cnt }{(\underline{\ts{r}{e}}) \ce[\ts{r}{e}]}{)}) \\\hspace*{3.4em}(\underline{ret} \cps{(cnt }{(\underline{\ts{r}{v}}) \cv[\ts{r}{v}]}{)})}{)}	\\\hspace*{1em}\tran{e}{($\lambda$\ts{v}{exc} \cps{(\appc~}{exc \ts{v}{exc}}{)})}{($\lambda$\ts{v}{val} \tran{\ts{e}{1}}{($\lambda$\ts{v}{exc1} \cps{(\appc~}{exc \ts{v}{exc1}}{)})}{($\lambda$\ts{v}{val1} ... \\\hspace*{3em}\cps{(\appf~}{\ts{v}{val} ret exc \ts{v}{val1}...}{)})})}}{)}
+\end{description}
+
+The other translations can be easily adapted in a similar manner. We also introduce the following new translations:
+\begin{description}
+\item \tran{\cl{(try }{\ts{e}{t}}{} \cl{catch (}{n}{)} \cl{}{\ts{e}{c}}{)}}{\ce}{\cv} = \\
+\cps{(\letc~}{\cps{(}{(\underline{c} \cps{(cnt }{(\underline{r}) \cv[r]}{)}) \\\hspace*{3.4em}(\underline{exc} \cps{(cnt }{(n) \tran{\ts{e}{c}}{\ce}{($\lambda$\ts{v}{c} \cps{(\appc~}{c \ts{v}{c}}{)})}}{)})}{)} \\\hspace*{1em}\tran{\ts{e}{t}}{($\lambda$\ts{v}{exc} \cps{(\appc~}{exc \ts{v}{exc}}{)})}{($\lambda$\ts{v}{t} \cps{(\appc~}{c \ts{v}{t}}{)})}}{)}
+\item \tran{\cl{(throw }{e}{)}}{\ce}{\cv} = \tran{e}{\ce}{\ce}
+\end{description}
+
+The entire program is translated with the relevant initial contexts, so as to have the program halt with an exit code of 0 in case of success, and an exit code of -1 in case of an error:
+
+\begin{center}
+\tran{p}{($\lambda$\ts{v}{exc} \cps{(halt }{-1}{)})}{($\lambda$\ts{v}{val} \cps{(halt }{0}{)})}
+\end{center}
+
+\section{Inlining}
+
+\end{document}
