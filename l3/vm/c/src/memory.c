@@ -26,7 +26,7 @@ static void* addr_v_to_p(value_t v_addr) {
 }
 
 static value_t addr_p_to_v(void* p_addr) {
-    assert(memory_start <= p_addr && p_addr <= memory_end);
+    assert((void*)memory_start <= p_addr && p_addr <= (void*)memory_end);
     return (value_t)((char*)p_addr - (char*)memory_start);
 }
 
@@ -266,8 +266,18 @@ value_t* memory_allocate(tag_t tag, value_t size, roots_t* roots) {
 }
 
 void memory_allocate_lb_ob(value_t l_size, value_t o_size, roots_t* roots) {
-  roots->Lb = memory_allocate(tag_RegisterFrame, l_size, roots);
-  roots->Ob = memory_allocate(tag_RegisterFrame, o_size, roots);
+  value_t total_size = l_size + o_size + HEADER_SIZE;
+  value_t* big_block = memory_allocate(tag_RegisterFrame, total_size, roots);
+
+  value_t* lb = big_block;
+  lb[-HEADER_SIZE] = header_pack(tag_RegisterFrame, l_size);
+  bitmap_set(lb);
+  roots->Lb = lb;
+
+  value_t* ob = next_block(lb);
+  ob[-HEADER_SIZE] = header_pack(tag_RegisterFrame, o_size);
+  bitmap_set(ob);
+  roots->Ob = ob;
 }
 
 value_t memory_get_block_size(value_t* block) {

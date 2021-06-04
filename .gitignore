@@ -1,0 +1,3 @@
+*.zip
+exam/*
+!exam/exam_report.tex
